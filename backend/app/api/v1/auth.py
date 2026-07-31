@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
-from app.schemas.user_schema import UserRegister
-from app.services.auth_service import register_user
+from app.schemas.user_schema import UserLogin, UserRegister
+from app.services.auth_service import login_user, register_user
 
 router = APIRouter(
     prefix="/auth",
@@ -18,4 +18,19 @@ async def register(user: UserRegister):
         raise HTTPException(
             status_code=400,
             detail=str(e)
+        )
+
+
+@router.post("/login")
+async def login(user: UserLogin):
+    try:
+        return await login_user(
+            user.email,
+            user.password,
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=401,
+            detail=str(e),
         )
