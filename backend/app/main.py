@@ -2,9 +2,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.v1.auth import router as auth_router
 from app.config.settings import settings
 from app.database.mongodb import connect_to_mongo, close_mongo_connection
-from app.api.v1.auth import router as auth_router
 
 
 @asynccontextmanager
@@ -19,6 +19,8 @@ app = FastAPI(
     version=settings.APP_VERSION,
     lifespan=lifespan
 )
+
+# Include API Routers
 app.include_router(auth_router)
 
 
