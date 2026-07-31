@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.auth.jwt import verify_token
 from app.schemas.user_schema import UserLogin, UserRegister
 from app.services.auth_service import login_user, register_user
 
@@ -34,3 +35,11 @@ async def login(user: UserLogin):
             status_code=401,
             detail=str(e),
         )
+
+
+@router.get("/profile")
+async def profile(user=Depends(verify_token)):
+    return {
+        "message": "Authorized",
+        "user": user,
+    }

@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, UTC
 
-from jose import jwt
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import JWTError, jwt
 
 from app.config.settings import settings
 
@@ -19,3 +21,27 @@ def create_access_token(data: dict):
         settings.JWT_SECRET_KEY,
         algorithm=settings.JWT_ALGORITHM,
     )
+
+
+security = HTTPBearer()
+
+
+def verify_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    token = credentials.credentials
+
+    try:
+        payload = jwt.decode(
+            token,
+            settings.JWT_SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM],
+        )
+
+        return payload
+
+    except JWTError:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired token",
+        )
