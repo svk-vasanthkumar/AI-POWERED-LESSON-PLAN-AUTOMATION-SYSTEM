@@ -66,3 +66,22 @@ async def update_lesson_plan(
     return {
         "message": "Lesson plan updated successfully"
     }
+
+
+@router.delete("/{lesson_id}")
+async def delete_lesson_plan(lesson_id: str):
+    db = get_database()
+
+    result = await db.lesson_plans.delete_one(
+        {"_id": ObjectId(lesson_id)}
+    )
+
+    if result.deleted_count == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="Lesson plan not found"
+        )
+
+    return {
+        "message": "Lesson plan deleted successfully"
+    }
