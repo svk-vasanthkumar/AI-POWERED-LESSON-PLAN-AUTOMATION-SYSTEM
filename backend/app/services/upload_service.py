@@ -3,6 +3,8 @@ import uuid
 from fastapi import UploadFile
 
 from app.services.text_extraction_service import extract_text
+from app.services.ai_service import generate_lesson_plan
+
 
 UPLOAD_FOLDER = "app/uploads"
 
@@ -24,8 +26,10 @@ async def save_uploaded_file(file: UploadFile):
 
     extracted_text = extract_text(filepath)
 
+    lesson_plan = await generate_lesson_plan(extracted_text)
+
     return {
         "filename": filename,
         "filepath": filepath,
-        "text": extracted_text,
+        "lesson_plan": lesson_plan,
     }
