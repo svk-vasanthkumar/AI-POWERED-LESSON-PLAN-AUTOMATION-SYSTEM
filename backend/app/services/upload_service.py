@@ -4,6 +4,7 @@ from fastapi import UploadFile
 
 from app.services.text_extraction_service import extract_text
 from app.services.ai_service import generate_lesson_plan
+from app.services.lesson_plan_service import save_lesson_plan
 
 
 UPLOAD_FOLDER = "app/uploads"
@@ -28,8 +29,15 @@ async def save_uploaded_file(file: UploadFile):
 
     lesson_plan = await generate_lesson_plan(extracted_text)
 
+    lesson_plan_id = await save_lesson_plan(
+        filename,
+        filepath,
+        extracted_text,
+        lesson_plan,
+    )
+
     return {
+        "lesson_plan_id": lesson_plan_id,
         "filename": filename,
-        "filepath": filepath,
         "lesson_plan": lesson_plan,
     }
