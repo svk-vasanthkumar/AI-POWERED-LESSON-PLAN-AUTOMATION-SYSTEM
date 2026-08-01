@@ -7,7 +7,8 @@ def create_faculty_document(
     email: str,
     department: str,
     designation: str,
-):
+) -> dict:
+    """Creates a standardized dictionary structure for MongoDB insertion."""
     return {
         "faculty_id": faculty_id,
         "name": name,

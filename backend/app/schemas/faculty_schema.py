@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -10,6 +11,6 @@ class FacultyCreate(BaseModel):
 
 
 class FacultyUpdate(BaseModel):
-    name: str
-    department: str
-    designation: str
+    name: Optional[str] = None
+    department: Optional[str] = None
+    designation: Optional[str] = None
