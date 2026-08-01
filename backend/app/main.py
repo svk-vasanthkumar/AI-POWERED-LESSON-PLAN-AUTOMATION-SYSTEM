@@ -11,6 +11,8 @@ from app.core.exception import register_exception_handlers
 from app.database.mongodb import close_mongo_connection, connect_to_mongo
 from app.middleware.logging import log_requests
 from app.api.v1.course import router as course_router
+from app.api.v1.academic_calendar import router as calendar_router
+
 
 
 
@@ -37,6 +39,8 @@ app.include_router(syllabus_router)
 app.include_router(faculty_router)
 app.middleware("http")(log_requests)
 app.include_router(course_router)
+app.include_router(calendar_router)
+
 
 
 @app.get("/")
