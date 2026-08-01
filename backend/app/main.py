@@ -7,6 +7,7 @@ from app.config.settings import settings
 from app.database.mongodb import connect_to_mongo, close_mongo_connection
 from app.api.v1.lesson_plan import router as lesson_router
 from app.api.v1.syllabus import router as syllabus_router
+from app.api.v1.faculty import router as faculty_router
 
 
 @asynccontextmanager
@@ -26,6 +27,7 @@ app = FastAPI(
 app.include_router(auth_router)
 app.include_router(lesson_router)
 app.include_router(syllabus_router)
+app.include_router(faculty_router)
 
 
 @app.get("/")

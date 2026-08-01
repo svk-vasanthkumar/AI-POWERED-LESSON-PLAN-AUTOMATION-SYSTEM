@@ -2,11 +2,25 @@ from fastapi import APIRouter, HTTPException
 from app.database.mongodb import get_database
 from bson import ObjectId
 from app.schemas.lesson_plan_schema import LessonPlanUpdate
+from app.services.lesson_plan_service import generate_and_save_lesson_plan
 
 router = APIRouter(
     prefix="/lesson-plan",
     tags=["Lesson Plan"]
 )
+
+
+@router.post("/generate/{syllabus_id}")
+async def generate(syllabus_id: str):
+    try:
+        return await generate_and_save_lesson_plan(
+            syllabus_id
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=str(e)
+        )
 
 
 @router.get("/")
