@@ -13,6 +13,9 @@ from app.middleware.logging import log_requests
 from app.api.v1.course import router as course_router
 from app.api.v1.academic_calendar import router as calendar_router
 from app.api.v1.timetable import router as timetable_router
+from app.api.v1.scheduler import router as scheduler_router
+
+
 
 
 
@@ -43,6 +46,7 @@ app.middleware("http")(log_requests)
 app.include_router(course_router)
 app.include_router(calendar_router)
 app.include_router(timetable_router)
+app.include_router(scheduler_router)
 
 
 @app.get("/")
