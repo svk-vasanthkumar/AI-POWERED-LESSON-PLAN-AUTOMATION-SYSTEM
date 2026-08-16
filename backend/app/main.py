@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException
 
 from app.database import check_database_connection, close_database
 from app.routers.auth import router as auth_router
+from app.routers.test_auth import router as test_auth_router
 
 
 @asynccontextmanager
@@ -24,6 +25,7 @@ app = FastAPI(
 
 # Register routers
 app.include_router(auth_router)
+app.include_router(test_auth_router)
 
 
 @app.get("/")
