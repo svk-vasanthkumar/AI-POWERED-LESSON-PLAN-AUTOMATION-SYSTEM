@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 
 from app.database import check_database_connection, close_database
+from app.routers.auth import router as auth_router
 
 
 @asynccontextmanager
@@ -20,6 +21,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Register routers
+app.include_router(auth_router)
 
 
 @app.get("/")
