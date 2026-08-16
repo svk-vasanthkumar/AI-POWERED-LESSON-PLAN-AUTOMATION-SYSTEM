@@ -1,27 +1,37 @@
-# Python
+# Python bytecode
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
 
-# Virtual Environment
+# Virtual env
 .venv/
 venv/
+ENV/
 
-# Environment Variables
+# Environment files
 .env
+*.env
 
-# VS Code
+# Database files
+*.db
+*.sqlite3
+
+# IDE/editor files
 .vscode/
+.idea/
+*.swp
+*.swo
 
-# Generated Files
-uploads/
-generated/
-
-# Logs
-*.log
-
-# Testing
+# Test / coverage outputs
 .pytest_cache/
+.coverage
+htmlcov/
 
-# OS
+# Uploads and generated exports
+uploads/*
+exports/*
+
+# Local system files
 .DS_Store
 Thumbs.db
