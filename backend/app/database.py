@@ -1,18 +1,23 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.config import settings
 
-DATABASE_URL = "sqlite:///./app.db"
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+client = AsyncIOMotorClient(
+    settings.mongodb_uri,
+    serverSelectionTimeoutMS=5000,
+)
+
+db = client[settings.database_name]
 
 
-def get_db():
-    db = SessionLocal()
+async def check_database_connection() -> bool:
     try:
-        yield db
-    finally:
-        db.close()
+        await client.admin.command("ping")
+        return True
+    except Exception:
+        return False
+
+
+async def close_database():
+    client.close()
