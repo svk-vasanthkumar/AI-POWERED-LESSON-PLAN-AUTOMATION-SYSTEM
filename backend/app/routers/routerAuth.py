@@ -3,17 +3,17 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.database import db
-from app.models.user import UserRole, create_user_document
-from app.schemas.user import (
+from app.models.modelUser import UserRole, create_user_document
+from app.schemas.schemaUser import (
     LoginResponse,
     ManagementUserCreate,
     UserLogin,
     UserRegister,
     UserResponse,
 )
-from app.utils.auth import require_roles
-from app.utils.jwt import create_access_token, decode_access_token
-from app.utils.password import hash_password, verify_password
+from app.utils.utilityAuth import require_roles
+from app.utils.utilityJWT import create_access_token, decode_access_token
+from app.utils.utilityPassword import hash_password, verify_password
 
 router = APIRouter(
     prefix="/auth",

@@ -3,7 +3,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.database import db
-from app.utils.jwt import decode_access_token
+from app.utils.utilityJWT import decode_access_token
 
 
 security = HTTPBearer()

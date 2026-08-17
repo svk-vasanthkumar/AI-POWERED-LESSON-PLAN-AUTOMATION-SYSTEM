@@ -3,7 +3,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 
 from app.database import check_database_connection, close_database
-from app.routers.auth import router as auth_router
+from app.routers.routerAuth import router as auth_router
+from app.routers.course import router as course_router
 
 
 
@@ -25,6 +26,7 @@ app = FastAPI(
 
 # Register routers
 app.include_router(auth_router)
+app.include_router(course_router)
 
 
 

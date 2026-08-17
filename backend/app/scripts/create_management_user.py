@@ -2,8 +2,8 @@ import asyncio
 import getpass
 
 from app.database import db
-from app.models.user import create_user_document, UserRole
-from app.utils.password import hash_password
+from app.models.modelUser import create_user_document, UserRole
+from app.utils.utilityPassword import hash_password
 
 
 async def main():
