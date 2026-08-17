@@ -2,9 +2,9 @@ from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.database import db
-from app.models.course import create_course_document
-from app.schemas.course import CourseCreate, CourseResponse
-from app.utils.auth import require_roles
+from app.models.modelCourse import create_course_document
+from app.schemas.schemaCourse import CourseCreate, CourseResponse
+from app.utils.utilityAuth import require_roles
 
 
 router = APIRouter(
