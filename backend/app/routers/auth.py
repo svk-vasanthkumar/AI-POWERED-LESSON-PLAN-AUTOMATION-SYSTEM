@@ -6,10 +6,12 @@ from app.database import db
 from app.models.user import UserRole, create_user_document
 from app.schemas.user import (
     LoginResponse,
+    ManagementUserCreate,
     UserLogin,
     UserRegister,
     UserResponse,
 )
+from app.utils.auth import require_roles
 from app.utils.jwt import create_access_token, decode_access_token
 from app.utils.password import hash_password, verify_password
 
@@ -123,6 +125,45 @@ async def profile(
 
     return {
         "message": "Authorized",
+        "user": {
+            "id": str(user["_id"]),
+            "name": user["name"],
+            "email": user["email"],
+            "role": user["role"],
+            "department": user["department"],
+        },
+    }
+
+
+@router.post("/admin/users")
+async def create_management_user(
+    data: ManagementUserCreate,
+    current_user=Depends(require_roles("admin")),
+):
+    existing_user = await db.users.find_one(
+        {
+            "email": data.email.lower(),
+        }
+    )
+
+    if existing_user:
+        raise HTTPException(
+            status_code=409,
+            detail="Email already registered",
+        )
+
+    user = create_user_document(
+        name=data.name,
+        email=data.email,
+        password_hash=hash_password(data.password),
+        role=UserRole(data.role),
+        department=data.department,
+    )
+
+    await db.users.insert_one(user)
+
+    return {
+        "message": "User created successfully",
         "user": {
             "id": str(user["_id"]),
             "name": user["name"],
