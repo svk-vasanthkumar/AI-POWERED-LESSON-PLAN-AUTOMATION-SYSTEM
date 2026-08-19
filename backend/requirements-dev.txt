@@ -1,0 +1,21 @@
+# AI-Powered Lesson Plan Automation System — TEST/DEV dependencies
+#
+# These packages are required ONLY to run the backend test-suite under
+# ``backend/tests``. They are intentionally kept separate from the runtime
+# ``requirements.txt`` so production installs stay lean.
+#
+# Install with:  pip install -r requirements.txt -r requirements-dev.txt
+
+-r requirements.txt
+
+# --- Test runner ---
+pytest==9.1.1
+pytest-asyncio==1.4.0            # required by the @pytest.mark.asyncio tests
+                                 # (progress, export, scheduler-service suites)
+
+# --- In-memory async MongoDB double ---
+mongomock-motor==0.0.36         # imported as `mongomock_motor` in the DB-backed
+                                 # tests; pulls a compatible `mongomock`
+
+# --- HTTP client for FastAPI's TestClient ---
+httpx==0.28.1                    # required by starlette.testclient / fastapi.testclient
