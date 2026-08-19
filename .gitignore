@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Backend runtime files
+backend/app/uploads/*
+!backend/app/uploads/.gitkeep
+backend/app/exports/
+*.log
+
+# Frontend dependencies and build output
+node_modules/
+dist/
+build/
+.next/
+.nuxt/
+.vite/
+
+# Test and coverage output
+coverage/
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

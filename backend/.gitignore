@@ -1,37 +1,8 @@
-# Python bytecode
+.venv/
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-
-# Virtual env
-.venv/
-venv/
-ENV/
-
-# Environment files
-.env
-*.env
-
-# Database files
-*.db
-*.sqlite3
-
-# IDE/editor files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Test / coverage outputs
 .pytest_cache/
-.coverage
-htmlcov/
-
-# Uploads and generated exports
-uploads/*
-exports/*
-
-# Local system files
-.DS_Store
-Thumbs.db
+.env
+app/uploads/
+app/exports/
+*.log
