@@ -1,0 +1,189 @@
+from datetime import UTC, datetime
+from bson import ObjectId
+from bson.errors import InvalidId
+from pymongo.errors import DuplicateKeyError
+
+from app.database.mongodb import get_database
+from app.models.faculty_model import create_faculty_document
+
+
+class FacultyInUseError(Exception):
+    """Raised when a faculty member cannot be deleted because records depend on it.
+
+    The API layer maps this to a controlled 409 CONFLICT. Deleting the faculty
+    would otherwise orphan the courses, timetables and generated schedules that
+    reference it via ``faculty_id``, so restriction is preferred over a
+    destructive cascade (the project has no deliberate cascade policy).
+    """
+
+    def __init__(self, dependencies: dict[str, int]):
+        self.dependencies = dependencies
+        summary = ", ".join(f"{count} {name}" for name, count in dependencies.items())
+        super().__init__(
+            "Faculty cannot be deleted while it is referenced by other records "
+            f"({summary}). Remove or reassign them first."
+        )
+
+
+# Collections that hold a ``faculty_id`` reference back to a faculty member.
+# Used to protect against orphaning dependent records on delete.
+_FACULTY_DEPENDENTS = (
+    ("courses", "course(s)"),
+    ("timetables", "timetable(s)"),
+    ("generated_schedules", "generated schedule(s)"),
+)
+
+
+def _id_variants(value) -> list:
+    """Both ObjectId and string forms of an id (legacy-compatible queries)."""
+    variants = [value, str(value)]
+    if not isinstance(value, ObjectId):
+        try:
+            variants.append(ObjectId(str(value)))
+        except Exception:
+            pass
+    seen: set = set()
+    unique: list = []
+    for item in variants:
+        key = (type(item).__name__, str(item))
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    return unique
+
+
+async def _count_faculty_dependencies(db, faculty_oid) -> dict[str, int]:
+    """Count records that reference this faculty, keyed by a friendly name."""
+    variants = _id_variants(faculty_oid)
+    dependencies: dict[str, int] = {}
+    for collection_name, label in _FACULTY_DEPENDENTS:
+        count = await db[collection_name].count_documents(
+            {"faculty_id": {"$in": variants}}
+        )
+        if count:
+            dependencies[label] = count
+    return dependencies
+
+
+async def create_faculty(data):
+    db = get_database()
+
+    existing = await db.faculty.find_one({"faculty_id": data.faculty_id})
+    if existing:
+        raise ValueError("Faculty ID already exists")
+
+    user = await db.users.find_one(
+        {
+            "email": data.email.lower(),
+            "role": "faculty",
+        }
+    )
+
+    user_id = None
+    if user:
+        existing_user_faculty = await db.faculty.find_one({"user_id": user["_id"]})
+        if existing_user_faculty:
+            raise ValueError("Faculty profile already exists for this user")
+        user_id = user["_id"]
+
+    document = create_faculty_document(
+        user_id=user_id,
+        faculty_id=data.faculty_id,
+        name=data.name,
+        email=data.email,
+        department=data.department,
+        designation=data.designation,
+    )
+    if user_id is None:
+        document.pop("user_id", None)
+
+    try:
+        result = await db.faculty.insert_one(document)
+    except DuplicateKeyError:
+        # Unique index on faculty_id raced with the pre-check above; return a
+        # controlled 400 instead of an unhandled 500.
+        raise ValueError("Faculty ID already exists")
+
+    return str(result.inserted_id)
+
+
+async def get_all_faculty():
+    db = get_database()
+    faculty = []
+
+    async for doc in db.faculty.find():
+        doc["_id"] = str(doc["_id"])
+        if "user_id" in doc:
+            doc["user_id"] = str(doc["user_id"])
+        faculty.append(doc)
+
+    return faculty
+
+
+async def get_faculty(faculty_id: str):
+    db = get_database()
+
+    try:
+        obj_id = ObjectId(faculty_id)
+    except InvalidId:
+        return None
+
+    faculty = await db.faculty.find_one({"_id": obj_id})
+    if faculty:
+        faculty["_id"] = str(faculty["_id"])
+        if "user_id" in faculty:
+            faculty["user_id"] = str(faculty["user_id"])
+
+    return faculty
+
+
+async def update_faculty(faculty_id: str, data):
+    db = get_database()
+
+    try:
+        obj_id = ObjectId(faculty_id)
+    except InvalidId:
+        return 0
+
+    # Build $set payload dynamically for non-null/provided fields
+    update_data = {
+        k: v for k, v in data.model_dump(exclude_unset=True).items() if v is not None
+    }
+
+    if not update_data:
+        return 0
+
+    update_data["updated_at"] = datetime.now(UTC)
+
+    result = await db.faculty.update_one(
+        {"_id": obj_id},
+        {"$set": update_data},
+    )
+
+    return result.modified_count
+
+
+async def delete_faculty(faculty_id: str):
+    """Delete a faculty member, refusing to orphan dependent records.
+
+    Raises :class:`FacultyInUseError` (-> 409) when any course, timetable or
+    generated schedule still references the faculty. Returns the deleted count
+    (0 -> 404) otherwise.
+    """
+    db = get_database()
+
+    try:
+        obj_id = ObjectId(faculty_id)
+    except InvalidId:
+        return 0
+
+    existing = await db.faculty.find_one({"_id": obj_id})
+    if existing is None:
+        return 0
+
+    dependencies = await _count_faculty_dependencies(db, obj_id)
+    if dependencies:
+        raise FacultyInUseError(dependencies)
+
+    result = await db.faculty.delete_one({"_id": obj_id})
+    return result.deleted_count
