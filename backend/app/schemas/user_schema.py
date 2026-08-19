@@ -1,7 +1,6 @@
-from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 class UserRegister(BaseModel):
@@ -17,16 +16,3 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
-
-
-class UserResponse(BaseModel):
-    id: str
-    name: str
-    email: EmailStr
-    role: str
-    department: str
-    created_at: datetime
-
-    model_config = ConfigDict(
-        from_attributes=True
-    )

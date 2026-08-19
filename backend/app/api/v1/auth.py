@@ -1,10 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.auth.jwt import verify_token
+from app.auth.dependencies import get_current_user
 from app.schemas.user_schema import UserLogin, UserRegister
 from app.services.auth_service import login_user, register_user
-from fastapi import UploadFile, File
-from app.services.upload_service import save_uploaded_file
 
 router = APIRouter(
     prefix="/auth",
@@ -40,14 +38,8 @@ async def login(user: UserLogin):
 
 
 @router.get("/profile")
-async def profile(user=Depends(verify_token)):
+async def profile(user=Depends(get_current_user)):
     return {
         "message": "Authorized",
         "user": user,
     }
-
-@router.post("/upload")
-async def upload_file(
-    file: UploadFile = File(...)
-):
-    return await save_uploaded_file(file)

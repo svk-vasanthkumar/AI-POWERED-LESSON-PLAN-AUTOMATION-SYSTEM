@@ -1,3 +1,5 @@
+from pymongo.errors import DuplicateKeyError
+
 from app.auth.jwt import create_access_token
 from app.auth.password import hash_password, verify_password
 from app.database.mongodb import get_database
@@ -7,6 +9,11 @@ from app.schemas.user_schema import UserRegister
 
 async def register_user(user: UserRegister):
     db = get_database()
+
+    # This is the public registration flow.  Privileged accounts must never be
+    # created from a value supplied by an unauthenticated client.
+    if user.role != "faculty":
+        raise ValueError("Public registration can only create faculty users")
 
     existing_user = await db.users.find_one(
         {"email": user.email.lower()}
@@ -19,11 +26,16 @@ async def register_user(user: UserRegister):
         name=user.name,
         email=user.email,
         password=hash_password(user.password),
-        role=user.role,
+        role="faculty",
         department=user.department,
     )
 
-    result = await db.users.insert_one(user_document)
+    try:
+        result = await db.users.insert_one(user_document)
+    except DuplicateKeyError:
+        # Unique index on users.email raced with the pre-check above; return a
+        # controlled 400 instead of an unhandled 500.
+        raise ValueError("Email already registered")
 
     return {
         "message": "User registered successfully",

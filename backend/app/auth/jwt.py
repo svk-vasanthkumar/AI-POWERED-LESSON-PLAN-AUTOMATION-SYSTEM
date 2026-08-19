@@ -23,12 +23,21 @@ def create_access_token(data: dict):
     )
 
 
-security = HTTPBearer()
+# auto_error=False so a MISSING Authorization header does not trigger
+# HTTPBearer's built-in 403. We handle the missing-credential case ourselves
+# and return 401, as required for unauthenticated requests.
+security = HTTPBearer(auto_error=False)
 
 
 def verify_token(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
+    if credentials is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated",
+        )
+
     token = credentials.credentials
 
     try:

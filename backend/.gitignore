@@ -1,27 +1,8 @@
-# Python
-__pycache__/
-*.pyc
-
-# Virtual Environment
 .venv/
-venv/
-
-# Environment Variables
-.env
-
-# VS Code
-.vscode/
-
-# Generated Files
-uploads/
-generated/
-
-# Logs
-*.log
-
-# Testing
+__pycache__/
+*.py[cod]
 .pytest_cache/
-
-# OS
-.DS_Store
-Thumbs.db
+.env
+app/uploads/
+app/exports/
+*.log
