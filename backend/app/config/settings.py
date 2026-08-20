@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     # Comma-separated list of allowed frontend origins. Defaults to the
     # local Next.js dev server. Override in production via the environment
     # (e.g. FRONTEND_ORIGINS="https://app.example.com").
-    FRONTEND_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+    FRONTEND_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173"
 
     # --- Uploads ---
     # Maximum accepted upload size in megabytes (development default: 10 MB).
