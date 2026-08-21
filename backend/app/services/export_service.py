@@ -39,13 +39,16 @@ import io
 import re
 from datetime import datetime, UTC
 
+import anyio
 from bson import ObjectId
 
 from app.config.logger import logger
 from app.database.mongodb import get_database
+from app.models.schedule_model import serialize_schedule
 from app.services.ace_lesson_plan_export import ACE_BUILDERS, assemble_ace_context
 from app.services.scheduler_service import ScheduleNotFoundError, get_latest_schedule
 from app.utils.object_id import to_object_id
+
 
 INSTITUTION = "Adhiyamaan College of Engineering"
 
@@ -129,6 +132,26 @@ def _generated_on() -> str:
 # ---------------------------------------------------------------------------
 
 
+def _id_variants(value) -> list:
+    """Both ObjectId and string forms of an id for query compatibility."""
+    if value is None:
+        return []
+    variants = [value, str(value)]
+    if not isinstance(value, ObjectId):
+        try:
+            variants.append(ObjectId(str(value)))
+        except Exception:
+            pass
+    seen = set()
+    unique = []
+    for item in variants:
+        key = (type(item).__name__, str(item))
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    return unique
+
+
 def _stringify_ids(doc: dict) -> dict:
     result = dict(doc)
     for key, value in list(result.items()):
@@ -161,6 +184,17 @@ async def get_lesson_plan_for_export(lesson_plan_id: str) -> tuple[dict, dict | 
 
     course = None
     course_id = lesson.get("course_id")
+    if course_id is None and lesson.get("syllabus_id"):
+        # Resolve course_id via syllabus for older or loosely linked plans
+        try:
+            s_oid = to_object_id(lesson["syllabus_id"], field="syllabus_id")
+            syllabus = await db.syllabi.find_one({"_id": s_oid})
+            if syllabus and syllabus.get("course_id"):
+                course_id = syllabus.get("course_id")
+                lesson["course_id"] = str(course_id)
+        except Exception:
+            pass
+
     if course_id is not None:
         try:
             course = await db.courses.find_one({"_id": ObjectId(str(course_id))})
@@ -170,6 +204,7 @@ async def get_lesson_plan_for_export(lesson_plan_id: str) -> tuple[dict, dict | 
         course = _stringify_ids(course)
 
     return _stringify_ids(lesson), course
+
 
 
 async def _resolve_faculty(db, faculty_id) -> dict | None:
@@ -991,54 +1026,96 @@ async def get_ace_lesson_plan_context(lesson_plan_id: str) -> tuple[dict, dict, 
     data recorded on each session, plus course/faculty metadata. Reads existing
     data only — never generates a schedule and never calls the AI model.
 
-    The schedule is optional: a lesson plan that has not been scheduled yet (or a
-    legacy plan) still exports, with the planned/executed columns left blank
-    (``assemble_ace_context`` falls back to the structured plan's topics).
-
-    Raises the same controlled errors as ``get_lesson_plan_for_export``
-    (LessonPlanNotFoundError -> 404, StructuredPlanRequiredError -> 422).
+    Distinguishes:
+      1. Schedule does not exist -> fallback to structured plan with blank columns
+      2. Schedule exists and has sessions -> fully populated ACE context
+      3. Schedule lookup failed -> controlled DocumentGenerationError (500)
+      4. Schedule exists but is malformed/empty -> controlled DocumentGenerationError / EmptyScheduleError
     """
     lesson, course = await get_lesson_plan_for_export(lesson_plan_id)
     structured = lesson["structured_plan"]
 
+    db = get_database()
+    lesson_oid = to_object_id(lesson_plan_id, field="lesson_plan_id")
+    course_id = lesson.get("course_id")
+    if course_id is None and course and course.get("_id"):
+        course_id = course["_id"]
+
     schedule: dict | None = None
     faculty: dict | None = None
-    course_id = lesson.get("course_id")
-    if course_id is not None:
-        try:
-            schedule = await get_latest_schedule(str(course_id))
-        except ScheduleNotFoundError:
-            schedule = None
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("ACE export: schedule lookup failed")
-            raise DocumentGenerationError(
-                "Failed to load the generated schedule for this lesson plan."
-            ) from exc
-        if schedule is not None:
-            try:
-                faculty = await _resolve_faculty(get_database(), schedule.get("faculty_id"))
-            except Exception:  # noqa: BLE001
-                faculty = None
 
-    context = assemble_ace_context(structured, course, faculty, schedule)
+    schedule_doc = None
+    try:
+        # 1a. Try active schedule matching this lesson_plan_id
+        schedule_doc = await db.generated_schedules.find_one(
+            {"lesson_plan_id": {"$in": _id_variants(lesson_oid)}, "active": True},
+            sort=[("version", -1)],
+        )
+        if schedule_doc is None:
+            # 1b. Try newest schedule matching this lesson_plan_id
+            schedule_doc = await db.generated_schedules.find_one(
+                {"lesson_plan_id": {"$in": _id_variants(lesson_oid)}},
+                sort=[("version", -1), ("created_at", -1)],
+            )
+        if schedule_doc is None and course_id is not None:
+            # 1c. Try active schedule for the course
+            course_oid = to_object_id(course_id, field="course_id")
+            schedule_doc = await db.generated_schedules.find_one(
+                {"course_id": {"$in": _id_variants(course_oid)}, "active": True},
+                sort=[("version", -1)],
+            )
+            if schedule_doc is None:
+                # 1d. Try newest schedule for the course
+                schedule_doc = await db.generated_schedules.find_one(
+                    {"course_id": {"$in": _id_variants(course_oid)}},
+                    sort=[("version", -1), ("created_at", -1)],
+                )
+    except Exception as exc:
+        # Case 3: Schedule lookup failed
+        logger.exception("ACE export: schedule lookup failed for lesson_plan_id=%s", lesson_plan_id)
+        raise DocumentGenerationError(
+            "Failed to load the generated schedule for this lesson plan."
+        ) from exc
+
+    if schedule_doc is not None:
+        # Check Case 4: Schedule exists but is malformed / empty
+        sessions = schedule_doc.get("sessions")
+        if not isinstance(sessions, list) or len(sessions) == 0:
+            logger.error(
+                "ACE export: schedule %s exists for lesson_plan_id=%s but contains malformed or empty sessions",
+                schedule_doc.get("_id"),
+                lesson_plan_id,
+            )
+            raise EmptyScheduleError(
+                "The generated schedule for this lesson plan contains no sessions."
+            )
+        schedule = serialize_schedule(schedule_doc)
+        try:
+            faculty = await _resolve_faculty(db, schedule.get("faculty_id"))
+        except Exception:
+            faculty = None
+
+    try:
+        context = assemble_ace_context(structured, course, faculty, schedule)
+    except Exception as exc:
+        logger.exception("ACE export: assemble_ace_context failed")
+        raise DocumentGenerationError(
+            "Failed to assemble ACE lesson plan export context."
+        ) from exc
+
     return context, lesson, course
 
 
 async def build_lesson_plan_export(
     lesson_plan_id: str, fmt: str
 ) -> tuple[bytes, str, str]:
-    """Fetch + render the ACE lesson plan. Returns ``(content, filename, media_type)``.
-
-    Task #7 replaced the previous generic lesson-plan document with the exact
-    Adhiyamaan College of Engineering format. The pure per-format builders
-    (``export_lesson_plan_pdf`` etc.) remain in this module for backward
-    compatibility and direct reuse, but the export endpoints now render the
-    college format.
-    """
+    """Fetch + render the ACE lesson plan. Returns ``(content, filename, media_type)``."""
+    if fmt not in ACE_BUILDERS:
+        raise DocumentGenerationError(f"Unsupported export format: {fmt}")
     builder = ACE_BUILDERS[fmt]
     context, lesson, course = await get_ace_lesson_plan_context(lesson_plan_id)
 
-    content = builder(context)
+    content = await anyio.to_thread.run_sync(builder, context)
 
     stem_source = (
         (course or {}).get("course_code")
@@ -1051,11 +1128,14 @@ async def build_lesson_plan_export(
 
 async def build_schedule_export(course_id: str, fmt: str) -> tuple[bytes, str, str]:
     """Fetch + render a schedule. Returns ``(content, filename, media_type)``."""
+    if fmt not in _SCHEDULE_BUILDERS:
+        raise DocumentGenerationError(f"Unsupported export format: {fmt}")
     builder = _SCHEDULE_BUILDERS[fmt]
     schedule, course, faculty = await get_schedule_for_export(course_id)
 
-    content = builder(schedule, course, faculty)
+    content = await anyio.to_thread.run_sync(builder, schedule, course, faculty)
 
     stem_source = (course or {}).get("course_code") or "schedule"
     filename = safe_filename("schedule", stem_source, extension=fmt)
     return content, filename, MEDIA_TYPES[fmt]
+

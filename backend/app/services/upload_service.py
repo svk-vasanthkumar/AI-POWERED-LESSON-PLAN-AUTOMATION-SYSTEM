@@ -1,13 +1,17 @@
 import os
 import uuid
 
+import anyio
 from fastapi import HTTPException, UploadFile, status
 
 from app.config.logger import logger
 from app.config.settings import settings
 from app.database.mongodb import get_database
 from app.services.syllabus_service import save_syllabus
-from app.services.text_extraction_service import extract_text_with_method
+from app.services.text_extraction_service import (
+    DocumentExtractionError,
+    extract_text_with_method,
+)
 from app.utils.object_id import to_object_id
 
 # Store uploads under a canonical, absolute directory so we can guarantee
@@ -64,6 +68,27 @@ def _validate_content_type(ext: str, content_type: str | None) -> None:
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail="File content type does not match the file extension.",
         )
+
+
+def _validate_magic_bytes(ext: str, contents: bytes) -> None:
+    """Verify standard file signatures (magic bytes) to prevent disguised files."""
+    if ext == ".pdf":
+        if not contents.startswith(b"%PDF-"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid PDF file: missing standard PDF signature.",
+            )
+    elif ext == ".docx":
+        # DOCX is an OpenXML ZIP archive starting with standard PK ZIP signature
+        if not (
+            contents.startswith(b"PK\x03\x04")
+            or contents.startswith(b"PK\x05\x06")
+            or contents.startswith(b"PK\x07\x08")
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid DOCX file: missing standard OpenXML signature.",
+            )
 
 
 async def _read_within_limit(file: UploadFile) -> bytes:
@@ -130,7 +155,10 @@ async def save_uploaded_file(
     # 3. Read the body enforcing the size limit.
     contents = await _read_within_limit(file)
 
-    # 4. Generate a safe UUID filename; the original name is metadata only.
+    # 4. Verify file signatures (magic bytes)
+    _validate_magic_bytes(ext, contents)
+
+    # 5. Generate a safe UUID filename; the original name is metadata only.
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     stored_filename = f"{uuid.uuid4().hex}{ext}"
     filepath = os.path.join(UPLOAD_FOLDER, stored_filename)
@@ -143,13 +171,15 @@ async def save_uploaded_file(
             detail="Invalid file path.",
         )
 
-    # 5. Write, then extract. If anything fails after the file is written,
+    # 6. Write, then extract in worker thread. If anything fails after the file is written,
     #    remove it and do NOT create a partial MongoDB document.
     try:
         with open(resolved, "wb") as buffer:
             buffer.write(contents)
 
-        extracted_text, extraction_method = extract_text_with_method(resolved)
+        extracted_text, extraction_method = await anyio.to_thread.run_sync(
+            extract_text_with_method, resolved
+        )
 
         syllabus_id = await save_syllabus(
             course_id=course_oid,
@@ -159,6 +189,12 @@ async def save_uploaded_file(
             original_filename=original_filename,
             extraction_method=extraction_method,
         )
+    except DocumentExtractionError as exc:
+        _remove_file_quietly(resolved)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
     except HTTPException:
         # Controlled client errors (e.g. corrupted document) -> clean up.
         _remove_file_quietly(resolved)
@@ -177,3 +213,4 @@ async def save_uploaded_file(
         "stored_filename": stored_filename,
         "message": "Syllabus uploaded successfully",
     }
+

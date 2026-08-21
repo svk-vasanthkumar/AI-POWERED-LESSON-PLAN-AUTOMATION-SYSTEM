@@ -1,5 +1,7 @@
+import anyio
 import json
 import re
+from typing import Any
 
 from groq import Groq, GroqError
 from pydantic import ValidationError
@@ -19,20 +21,48 @@ class AIGenerationError(Exception):
 
 
 class AIServiceUnavailableError(AIGenerationError):
-    """Raised when the Groq provider itself cannot be reached / fails.
+    """Raised when the Groq provider itself cannot be reached / fails or is unconfigured.
 
-    Covers network errors, timeouts, authentication/rate-limit failures and
-    any other transport-level problem talking to Groq. It subclasses
-    :class:`AIGenerationError` so existing ``except AIGenerationError`` handlers
-    keep working, while the API layer can map it to a 503 (dependency
+    Covers configuration errors, network errors, timeouts, authentication/rate-limit
+    failures, unavailable models and any other transport-level problem talking to Groq.
+    It subclasses :class:`AIGenerationError` so existing ``except AIGenerationError``
+    handlers keep working, while the API layer can map it to a 503 (dependency
     unavailable). The underlying exception is logged server-side only — API
     keys, provider internals and raw messages are never surfaced.
     """
 
 
-client = Groq(api_key=settings.GROQ_API_KEY)
+# Module-level client / model handles (can be monkeypatched by tests).
+client: Any = None
+_MODEL: str | None = None
 
-_MODEL = settings.GROQ_MODEL
+
+def get_groq_client() -> Any:
+    """Return a configured Groq client or raise AIServiceUnavailableError."""
+    global client
+    if client is not None:
+        return client
+    api_key = settings.GROQ_API_KEY
+    if not api_key or not str(api_key).strip():
+        logger.error("Groq API key is not configured in settings")
+        raise AIServiceUnavailableError(
+            "The AI service is not properly configured. Please contact the administrator."
+        )
+    return Groq(api_key=str(api_key).strip())
+
+
+def get_groq_model() -> str:
+    """Return the configured Groq model name or raise AIServiceUnavailableError."""
+    global _MODEL
+    model = _MODEL or settings.GROQ_MODEL
+    if not model or not str(model).strip():
+        logger.error("Groq model name is not configured in settings")
+        raise AIServiceUnavailableError(
+            "The AI service model is not properly configured. Please contact the administrator."
+        )
+    return str(model).strip()
+
+
 
 # The exact JSON shape the model must emit. Kept in the prompt so the model has
 # a concrete target; the response is validated against LessonPlanAIOutput.
@@ -138,33 +168,47 @@ def structured_to_topic_text(plan: LessonPlanAIOutput) -> str:
     return "\n".join(lines)
 
 
+def _call_groq_sync(prompt: str, model: str, client: Groq) -> Any:
+    """Perform synchronous Groq API call inside a worker thread."""
+    return client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.5,
+        response_format={"type": "json_object"},
+    )
+
+
 async def generate_lesson_plan(text: str) -> LessonPlanAIOutput:
     """Generate a validated, structured lesson plan from syllabus text.
 
-    Returns a ``LessonPlanAIOutput`` instance. Raises ``ValueError`` with a
-    safe, generic message if the model output cannot be parsed or validated;
-    the underlying detail is logged server-side only.
+    Returns a ``LessonPlanAIOutput`` instance. Raises ``AIServiceUnavailableError``
+    (mapped to 503) or ``AIGenerationError`` (mapped to 502) with safe, generic
+    messages; underlying details and secrets are logged server-side only.
     """
+    client = get_groq_client()
+    model = get_groq_model()
     prompt = _build_prompt(text)
 
-    # Talk to Groq defensively: any transport/provider failure (network,
-    # timeout, auth, rate-limit, 5xx) must become a controlled, safe error
-    # rather than escaping as a generic 500 that could leak internals.
+    # Talk to Groq defensively in a worker thread: any transport/provider failure
+    # (network, timeout, auth, rate-limit, model unavailable, 5xx) becomes a
+    # controlled, safe error rather than escaping as an unhandled 500.
     try:
-        response = client.chat.completions.create(
-            model=_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.5,
-            response_format={"type": "json_object"},
-        )
+        response = await anyio.to_thread.run_sync(_call_groq_sync, prompt, model, client)
     except GroqError as exc:
-        logger.error("Groq provider call failed: %s", type(exc).__name__)
-        logger.debug("Groq failure detail", exc_info=exc)
+        status_code = getattr(exc, "status_code", None)
+        logger.error(
+            "Groq provider call failed: %s (status_code=%s)",
+            type(exc).__name__,
+            status_code,
+        )
+        logger.debug("Groq failure detail (model=%s)", model, exc_info=exc)
         raise AIServiceUnavailableError(
             "The AI service is temporarily unavailable. Please try again later."
         ) from exc
+    except AIServiceUnavailableError:
+        raise
     except Exception as exc:  # pragma: no cover - unexpected transport failure
-        logger.exception("Unexpected error calling the AI provider")
+        logger.exception("Unexpected error calling the AI provider (model=%s)", model)
         raise AIServiceUnavailableError(
             "The AI service is temporarily unavailable. Please try again later."
         ) from exc
@@ -173,7 +217,7 @@ async def generate_lesson_plan(text: str) -> LessonPlanAIOutput:
     # so a missing choice never raises an unhandled IndexError/AttributeError.
     raw = None
     try:
-        if response is not None and response.choices:
+        if response is not None and getattr(response, "choices", None):
             raw = response.choices[0].message.content
     except (AttributeError, IndexError, TypeError) as exc:
         logger.error("Malformed AI response envelope: %s", exc)

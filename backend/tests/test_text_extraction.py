@@ -345,17 +345,44 @@ def test_ocr_leaves_no_image_artifacts(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 8. Backward-compatible extract_text() wrapper still returns a plain string
+# 9. Scanned PDF exceeding max OCR page limit
 # ---------------------------------------------------------------------------
 
-def test_extract_text_wrapper_returns_string(tmp_path):
-    pdf = str(tmp_path / "wrap.pdf")
-    _make_text_pdf(pdf, "Unit 1 Introduction to Software Engineering Principles")
+def test_scanned_pdf_exceeding_ocr_page_limit_raises(tmp_path):
+    pdf = str(tmp_path / "huge_scan.pdf")
+    _make_scanned_pdf(pdf, pages=26)
 
-    result = tes.extract_text(pdf)
-    assert isinstance(result, str)
-    assert "Software Engineering" in result
+    with pytest.raises(DocumentExtractionError) as exc:
+        tes.extract_text_with_method(pdf)
+
+    assert "maximum OCR page limit" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# 10. Magic bytes validation in upload service
+# ---------------------------------------------------------------------------
+
+def test_magic_bytes_validation():
+    from fastapi import HTTPException
+    from app.services.upload_service import _validate_magic_bytes
+
+    # Valid PDF
+    _validate_magic_bytes(".pdf", b"%PDF-1.7 dummy content")
+
+    # Invalid PDF
+    with pytest.raises(HTTPException) as exc:
+        _validate_magic_bytes(".pdf", b"NOT A PDF")
+    assert exc.value.status_code == 400
+
+    # Valid DOCX
+    _validate_magic_bytes(".docx", b"PK\x03\x04\x14\x00\x06\x00")
+
+    # Invalid DOCX
+    with pytest.raises(HTTPException) as exc:
+        _validate_magic_bytes(".docx", b"INVALID DOCX")
+    assert exc.value.status_code == 400
 
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+

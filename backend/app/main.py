@@ -21,15 +21,9 @@ from app.api.v1.course import router as course_router
 from app.api.v1.academic_calendar import router as calendar_router
 from app.api.v1.timetable import router as timetable_router
 from app.api.v1.scheduler import router as scheduler_router
-
-
-
-
-
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+
     await connect_to_mongo()
     yield
     await close_mongo_connection()
@@ -46,7 +40,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.frontend_origins_list,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -91,3 +85,22 @@ async def health():
         )
 
     return {"status": "ok", "database": db_status}
+
+
+@app.get("/health/live")
+async def health_live():
+    """Process liveness probe: returns 200 if FastAPI process is alive."""
+    return {"status": "alive"}
+
+
+@app.get("/health/ready")
+async def health_ready():
+    """Process readiness probe: returns 200 if MongoDB is reachable, 503 otherwise."""
+    try:
+        await ping_database()
+        return {"status": "ready", "database": "connected"}
+    except DatabaseUnavailableError:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not_ready", "database": "unavailable"},
+        )

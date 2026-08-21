@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -36,9 +37,24 @@ class Settings(BaseSettings):
     OCR_RENDER_ZOOM: float = 2.0
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=[".env", "backend/.env"],
         extra="ignore"
     )
+
+
+    @field_validator("GROQ_API_KEY")
+    @classmethod
+    def validate_groq_api_key(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("GROQ_API_KEY cannot be empty or whitespace")
+        return v.strip()
+
+    @field_validator("GROQ_MODEL")
+    @classmethod
+    def validate_groq_model(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("GROQ_MODEL cannot be empty or whitespace")
+        return v.strip()
 
     @property
     def frontend_origins_list(self) -> list[str]:

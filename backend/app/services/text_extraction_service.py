@@ -113,12 +113,25 @@ def _render_page_to_image(page) -> bytes:
     return pixmap.tobytes("png")
 
 
+MAX_OCR_PAGES = 25
+
+
 def _extract_pdf_with_ocr(document) -> str:
     from app.services.ocr_service import (
         OCRProcessingError,
         OCRUnavailableError,
         run_ocr,
     )
+
+    if len(document) > MAX_OCR_PAGES:
+        logger.warning(
+            "Scanned PDF page count (%d) exceeds max OCR limit (%d)",
+            len(document),
+            MAX_OCR_PAGES,
+        )
+        raise DocumentExtractionError(
+            f"Scanned PDF exceeds maximum OCR page limit of {MAX_OCR_PAGES} pages."
+        )
 
     page_texts: list[str] = []
 
@@ -142,6 +155,7 @@ def _extract_pdf_with_ocr(document) -> str:
             ) from exc
 
     return "\n\n".join(page_texts).strip()
+
 
 
 def _iter_docx_block_items(parent):

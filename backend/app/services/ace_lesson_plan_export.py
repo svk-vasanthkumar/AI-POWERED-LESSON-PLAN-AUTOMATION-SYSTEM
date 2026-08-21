@@ -229,23 +229,37 @@ def format_period_label(session: dict) -> str:
     return ""
 
 
+from datetime import date, datetime
+
+
 def format_date_with_day(date_value, day_value=None) -> str:
     """Render a "DD Mon YYYY (Weekday)" cell; blank when no date is present."""
-    text = _clean(date_value)
-    if not text:
+    if date_value is None:
         return ""
-    weekday = _clean(day_value)
-    parsed = None
-    try:
-        parsed = datetime.strptime(text[:10], "%Y-%m-%d").date()
-    except ValueError:
-        parsed = None
-    if parsed is not None:
-        if not weekday:
-            weekday = _WEEKDAYS[parsed.weekday()]
-        pretty = parsed.strftime("%d %b %Y")
+    if isinstance(date_value, datetime):
+        date_obj = date_value.date()
+    elif isinstance(date_value, date):
+        date_obj = date_value
     else:
-        pretty = text
+        text = _clean(date_value)
+        if not text:
+            return ""
+        date_obj = None
+        for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d"):
+            try:
+                head = text.replace("T", " ").split(" ")[0]
+                date_obj = datetime.strptime(head, fmt).date()
+                break
+            except ValueError:
+                continue
+        if date_obj is None:
+            weekday = _clean(day_value)
+            return f"{text} ({weekday})" if weekday else text
+
+    weekday = _clean(day_value)
+    if not weekday:
+        weekday = _WEEKDAYS[date_obj.weekday()]
+    pretty = date_obj.strftime("%d %b %Y")
     return f"{pretty} ({weekday})" if weekday else pretty
 
 
@@ -390,9 +404,13 @@ def assemble_ace_context(
             units_out.append(group)
         unit_map[unit_number]["rows"].append(row)
 
-    sessions = [s for s in ((schedule or {}).get("sessions") or []) if isinstance(s, dict)]
-
-    if sessions:
+    if schedule is not None:
+        raw_sessions = schedule.get("sessions")
+        if not isinstance(raw_sessions, list) or len(raw_sessions) == 0:
+            raise ValueError("Invalid schedule: schedule contains no sessions")
+        sessions = [s for s in raw_sessions if isinstance(s, dict)]
+        if len(sessions) == 0:
+            raise ValueError("Invalid schedule: sessions list contains no valid session objects")
         for session in sessions:
             _push(
                 session.get("unit_number"),
@@ -400,7 +418,7 @@ def assemble_ace_context(
                 _row_from_session(session, topic_index),
             )
     else:
-        # No schedule yet -> fall back to the structured plan topics so the
+        # Case 1: No schedule yet -> fall back to the structured plan topics so the
         # export still renders (planned/executed columns simply stay blank).
         for unit in _as_list(structured.get("units")):
             if not isinstance(unit, dict):
@@ -423,8 +441,9 @@ def assemble_ace_context(
         "units": units_out,
         "legend": [(code, PEDAGOGY_CODES[code]) for code in PEDAGOGY_LEGEND_ORDER],
         "signatories": list(SIGNATORIES),
-        "has_schedule": bool(sessions),
+        "has_schedule": schedule is not None,
     }
+
 
 
 def _unit_heading(unit: dict) -> str:

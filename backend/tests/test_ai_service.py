@@ -174,5 +174,61 @@ def test_no_choices_maps_to_generation_error(patch_client):
         _run(generate_lesson_plan("text"))
 
 
+# ---------------------------------------------------------------------------
+# 6. Specific Groq error cases (auth, rate limit, unavailable model)
+# ---------------------------------------------------------------------------
+
+def test_groq_auth_failure_maps_to_unavailable(patch_client):
+    def _auth_err(**kw):
+        err = GroqError("Invalid API key")
+        err.status_code = 401
+        raise err
+
+    patch_client(_auth_err)
+    with pytest.raises(AIServiceUnavailableError) as exc:
+        _run(generate_lesson_plan("text"))
+    assert "Invalid API key" not in str(exc.value)
+
+
+def test_groq_rate_limit_maps_to_unavailable(patch_client):
+    def _rate_err(**kw):
+        err = GroqError("Rate limit exceeded")
+        err.status_code = 429
+        raise err
+
+    patch_client(_rate_err)
+    with pytest.raises(AIServiceUnavailableError):
+        _run(generate_lesson_plan("text"))
+
+
+def test_groq_model_not_found_maps_to_unavailable(patch_client):
+    def _model_err(**kw):
+        err = GroqError("Model llama-3.3-70b-versatile not found")
+        err.status_code = 404
+        raise err
+
+    patch_client(_model_err)
+    with pytest.raises(AIServiceUnavailableError):
+        _run(generate_lesson_plan("text"))
+
+
+def test_fenced_json_recovery_succeeds(patch_client):
+    fenced = f"```json\n{_VALID_PAYLOAD}\n```"
+    patch_client(lambda **kw: _envelope(fenced))
+
+    plan = _run(generate_lesson_plan("syllabus text"))
+    assert isinstance(plan, LessonPlanAIOutput)
+    assert plan.course_title == "Intro to CS"
+
+
+def test_missing_groq_model_raises_configuration_error(monkeypatch):
+    monkeypatch.setattr(ai_service, "client", None)
+    monkeypatch.setattr(ai_service.settings, "GROQ_MODEL", "")
+    with pytest.raises(AIServiceUnavailableError) as exc:
+        _run(generate_lesson_plan("text"))
+    assert "configured" in str(exc.value).lower()
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+

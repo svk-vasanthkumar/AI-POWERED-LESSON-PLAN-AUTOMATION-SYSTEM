@@ -154,5 +154,33 @@ def test_health_degraded_when_database_unreachable(monkeypatch):
     assert body["database"] == "unavailable"
 
 
+def test_health_live_probe():
+    r = _health_client().get("/health/live")
+    assert r.status_code == 200
+    assert r.json() == {"status": "alive"}
+
+
+
+def test_health_ready_probe_connected(monkeypatch):
+    async def _ok(*_a, **_k):
+        return True
+
+    monkeypatch.setattr("app.main.ping_database", _ok)
+    r = _health_client().get("/health/ready")
+    assert r.status_code == 200
+    assert r.json() == {"status": "ready", "database": "connected"}
+
+
+def test_health_ready_probe_unavailable(monkeypatch):
+    async def _fail(*_a, **_k):
+        raise DatabaseUnavailableError("Could not reach the database")
+
+    monkeypatch.setattr("app.main.ping_database", _fail)
+    r = _health_client().get("/health/ready")
+    assert r.status_code == 503
+    assert r.json() == {"status": "not_ready", "database": "unavailable"}
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+

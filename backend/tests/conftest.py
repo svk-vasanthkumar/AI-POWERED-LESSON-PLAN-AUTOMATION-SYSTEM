@@ -20,7 +20,22 @@ _DUMMY_ENV = {
     "JWT_ALGORITHM": "HS256",
     "ACCESS_TOKEN_EXPIRE_MINUTES": "30",
     "GROQ_API_KEY": "test-groq-key",
+    "GROQ_MODEL": "openai/gpt-oss-120b",
 }
 
 for _key, _value in _DUMMY_ENV.items():
     os.environ.setdefault(_key, _value)
+
+import pytest
+from mongomock_motor import AsyncMongoMockClient
+from app.database import mongodb
+
+
+@pytest.fixture()
+def db(monkeypatch):
+    client = AsyncMongoMockClient()
+    database = client["test_db"]
+    monkeypatch.setattr(mongodb, "database", database)
+    return database
+
+
