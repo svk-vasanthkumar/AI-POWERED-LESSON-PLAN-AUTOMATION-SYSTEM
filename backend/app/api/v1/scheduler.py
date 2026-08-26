@@ -1,7 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.auth.dependencies import get_current_user
+from app.auth.resource_access import ensure_course_id_access
+from app.database.mongodb import get_database
 from app.schemas.progress_schema import SessionRescheduleRequest, SessionStatusUpdate
+from app.utils.object_id import to_object_id
 from app.services.export_service import (
     DocumentGenerationError,
     EmptyScheduleError,
@@ -25,7 +28,14 @@ from app.services.scheduler_service import (
 )
 
 # Every scheduler endpoint requires a valid Bearer JWT.
-# All roles (admin, hod, faculty) may generate / read a schedule.
+# All roles (admin, hod, faculty) may generate / read a schedule, BUT every
+# operation is scoped to a single ``{course_id}`` and must additionally pass a
+# per-course ownership check (see ``require_course_access``). Authentication
+# alone (a valid token / an allowed role) is NOT sufficient: a faculty user may
+# only act on the courses actually assigned to them, and admin/hod may act on
+# any course. This closes the IDOR where any authenticated user could read,
+# generate, regenerate, export or mutate another faculty's schedule purely by
+# changing the course id in the URL.
 router = APIRouter(
     prefix="/scheduler",
     tags=["Scheduler"],
@@ -33,7 +43,30 @@ router = APIRouter(
 )
 
 
-@router.post("/{course_id}")
+async def require_course_access(
+    course_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Enforce per-course resource ownership for a ``{course_id}`` route (IDOR fix).
+
+    This is the single authorization gate every scheduler route shares. It:
+
+      * validates the ``course_id`` (malformed -> 400, via ``to_object_id``),
+      * loads the course and returns 404 when it does not exist,
+      * raises 403 unless the authenticated user may access that course
+        (admin/hod -> any course; faculty -> only courses whose
+        ``faculty_id`` resolves to their own faculty record).
+
+    It reuses the existing ownership architecture (``ensure_course_id_access``)
+    rather than introducing a second permission system, and returns the course
+    document so handlers can reuse it if needed.
+    """
+    db = get_database()
+    course_oid = to_object_id(course_id, field="course_id")
+    return await ensure_course_id_access(db, current_user, course_oid)
+
+
+@router.post("/{course_id}", dependencies=[Depends(require_course_access)])
 async def generate(
     course_id: str,
     academic_year: str | None = Query(
@@ -79,7 +112,7 @@ async def generate(
         )
 
 
-@router.get("/{course_id}")
+@router.get("/{course_id}", dependencies=[Depends(require_course_access)])
 async def get_schedule(course_id: str):
     """Return the latest generated schedule for a course (Phase 12)."""
     try:
@@ -108,7 +141,10 @@ async def get_schedule(course_id: str):
 # ---------------------------------------------------------------------------
 
 
-@router.patch("/{course_id}/sessions/{session_id}")
+@router.patch(
+    "/{course_id}/sessions/{session_id}",
+    dependencies=[Depends(require_course_access)],
+)
 async def patch_session_status(
     course_id: str,
     session_id: str,
@@ -150,7 +186,10 @@ async def patch_session_status(
         )
 
 
-@router.post("/{course_id}/sessions/{session_id}/reschedule")
+@router.post(
+    "/{course_id}/sessions/{session_id}/reschedule",
+    dependencies=[Depends(require_course_access)],
+)
 async def reschedule_session_endpoint(
     course_id: str,
     session_id: str,
@@ -196,7 +235,10 @@ async def reschedule_session_endpoint(
         )
 
 
-@router.get("/{course_id}/progress")
+@router.get(
+    "/{course_id}/progress",
+    dependencies=[Depends(require_course_access)],
+)
 async def get_progress(course_id: str):
     """Return derived course/syllabus progress + deviations (Phase 12)."""
     try:
@@ -243,16 +285,25 @@ async def _export_schedule_response(course_id: str, fmt: str) -> Response:
     )
 
 
-@router.get("/{course_id}/export/pdf")
+@router.get(
+    "/{course_id}/export/pdf",
+    dependencies=[Depends(require_course_access)],
+)
 async def export_schedule_as_pdf(course_id: str):
     return await _export_schedule_response(course_id, "pdf")
 
 
-@router.get("/{course_id}/export/docx")
+@router.get(
+    "/{course_id}/export/docx",
+    dependencies=[Depends(require_course_access)],
+)
 async def export_schedule_as_docx(course_id: str):
     return await _export_schedule_response(course_id, "docx")
 
 
-@router.get("/{course_id}/export/xlsx")
+@router.get(
+    "/{course_id}/export/xlsx",
+    dependencies=[Depends(require_course_access)],
+)
 async def export_schedule_as_xlsx(course_id: str):
     return await _export_schedule_response(course_id, "xlsx")
