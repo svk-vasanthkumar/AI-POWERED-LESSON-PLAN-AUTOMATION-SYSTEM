@@ -270,4 +270,4 @@ async def remove_calendar(
 
     return {
         "message": "Academic calendar deleted successfully."
-    } 
+    }
