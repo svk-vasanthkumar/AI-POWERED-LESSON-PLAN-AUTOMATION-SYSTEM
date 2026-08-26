@@ -1,8 +1,6 @@
 import os
 import tempfile
 
-from app.config.logger import logger
-
 from fastapi import (
     APIRouter,
     Depends,
@@ -16,11 +14,13 @@ from app.auth.dependencies import (
     get_current_user,
     require_roles,
 )
+from app.config.logger import logger
 from app.schemas.academic_calendar_schema import (
     AcademicCalendarCreate,
     AcademicCalendarUpdate,
 )
 from app.services.academic_calendar_service import (
+    CalendarAlreadyExistsError,
     confirm_calendar,
     create_calendar,
     create_pending_calendar,
@@ -141,7 +141,13 @@ async def upload_calendar(
 
         calendar = result["calendar"]
 
-        calendar_id = await create_pending_calendar(calendar)
+        try:
+            calendar_id = await create_pending_calendar(calendar)
+        except CalendarAlreadyExistsError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            )
 
         return {
             "calendar_id": calendar_id,
@@ -205,18 +211,14 @@ async def single_calendar(
 )
 async def confirm_uploaded_calendar(
     calendar_id: str,
-    data: AcademicCalendarCreate,
     current_user=Depends(require_roles("admin", "hod")),
 ):
-    confirmed = await confirm_calendar(
-        calendar_id,
-        data,
-    )
+    confirmed = await confirm_calendar(calendar_id)
 
     if not confirmed:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Academic calendar not found.",
+            detail="Pending academic calendar not found.",
         )
 
     return {
