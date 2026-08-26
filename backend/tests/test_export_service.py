@@ -405,15 +405,23 @@ def test_lesson_plan_export_old_plan_422(client, db):
 
 
 def test_schedule_export_endpoints(client, db):
+    # Scheduler exports are now scoped to the course owner (IDOR fix): the
+    # seeded schedule is not owned by a random ``_auth`` faculty, so — exactly
+    # like the lesson-plan content-type test above — this uses an admin manager
+    # (an authorized role for any course) to verify content types end-to-end.
     course_id = _run(_seed_schedule(db))
     for fmt in ("pdf", "docx", "xlsx"):
-        r = client.get(f"/scheduler/{course_id}/export/{fmt}", headers=_auth(db))
+        r = client.get(
+            f"/scheduler/{course_id}/export/{fmt}", headers=_auth(db, "admin")
+        )
         assert r.status_code == 200
         assert r.headers["content-type"].split(";")[0] == ex.MEDIA_TYPES[fmt]
 
 
 def test_schedule_export_missing_404(client, db):
-    r = client.get(f"/scheduler/{ObjectId()}/export/pdf", headers=_auth(db))
+    # An admin manager reaches the export layer, which returns 404 for a course
+    # that has no schedule (rather than a 403 authorization short-circuit).
+    r = client.get(f"/scheduler/{ObjectId()}/export/pdf", headers=_auth(db, "admin"))
     assert r.status_code == 404
 
 

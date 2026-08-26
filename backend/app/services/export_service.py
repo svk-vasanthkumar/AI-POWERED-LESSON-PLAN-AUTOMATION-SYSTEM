@@ -35,6 +35,7 @@ Exceptions (mapped to HTTP status codes by the router):
 
 from __future__ import annotations
 
+import asyncio
 import io
 import re
 from datetime import datetime, UTC
@@ -1038,7 +1039,10 @@ async def build_lesson_plan_export(
     builder = ACE_BUILDERS[fmt]
     context, lesson, course = await get_ace_lesson_plan_context(lesson_plan_id)
 
-    content = builder(context)
+    # reportlab / python-docx / openpyxl rendering is CPU-bound and blocking.
+    # Run it on a worker thread so a large export never stalls the event loop
+    # for the other concurrent faculty users (Task #15).
+    content = await asyncio.to_thread(builder, context)
 
     stem_source = (
         (course or {}).get("course_code")
@@ -1054,7 +1058,8 @@ async def build_schedule_export(course_id: str, fmt: str) -> tuple[bytes, str, s
     builder = _SCHEDULE_BUILDERS[fmt]
     schedule, course, faculty = await get_schedule_for_export(course_id)
 
-    content = builder(schedule, course, faculty)
+    # Offload the blocking document rendering to a worker thread (Task #15).
+    content = await asyncio.to_thread(builder, schedule, course, faculty)
 
     stem_source = (course or {}).get("course_code") or "schedule"
     filename = safe_filename("schedule", stem_source, extension=fmt)
