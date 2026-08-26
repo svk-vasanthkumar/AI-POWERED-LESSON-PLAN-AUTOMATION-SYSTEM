@@ -1,12 +1,15 @@
+from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from app.auth.dependencies import get_current_user, require_roles
 from app.auth.resource_access import (
     accessible_course_ids,
+    ensure_course_id_access,
     ids_match,
     is_manager,
 )
 from app.database.mongodb import get_database
+from app.models.schedule_model import serialize_schedule
 from app.schemas.lesson_plan_schema import LessonPlanUpdate
 from app.utils.object_id import to_object_id
 from app.services.ai_service import AIGenerationError, AIServiceUnavailableError
@@ -17,10 +20,12 @@ from app.services.export_service import (
     build_lesson_plan_export,
 )
 from app.services.lesson_plan_service import (
+    LessonPlanCoverageError,
     LessonPlanInUseError,
     delete_lesson_plan,
     generate_and_save_lesson_plan,
 )
+from app.services.syllabus_parser import SyllabusParseError
 
 # Every lesson-plan endpoint requires a valid Bearer JWT.
 router = APIRouter(
@@ -38,6 +43,99 @@ def _serialize_lesson(lesson: dict) -> dict:
     if "course_id" in lesson:
         lesson["course_id"] = str(lesson["course_id"])
     return lesson
+
+
+def _oid_variants(value) -> list:
+    """Both ObjectId and string forms of an id, for legacy-compatible ``$in``."""
+    if value is None:
+        return []
+    variants = [value, str(value)]
+    if not isinstance(value, ObjectId):
+        try:
+            variants.append(ObjectId(str(value)))
+        except Exception:
+            pass
+    seen: set = set()
+    unique: list = []
+    for item in variants:
+        key = (type(item).__name__, str(item))
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    return unique
+
+
+async def _active_schedule_for_lesson(db, lesson: dict) -> dict | None:
+    """Locate the active generated schedule that belongs to a lesson plan.
+
+    Lookup order (Task #7), never attaching another faculty/course's schedule:
+
+      1. ``generated_schedules.lesson_plan_id == lesson._id`` AND ``active``
+         (the direct, unambiguous link).
+      2. Fallback: ``course_id == lesson.course_id`` AND ``active`` (older
+         schedules generated before ``lesson_plan_id`` was stored).
+
+    The newest version is preferred in both cases.
+    """
+    schedule = await db.generated_schedules.find_one(
+        {"lesson_plan_id": {"$in": _oid_variants(lesson.get("_id"))}, "active": True},
+        sort=[("version", -1)],
+    )
+    if schedule is None and lesson.get("course_id") is not None:
+        schedule = await db.generated_schedules.find_one(
+            {"course_id": {"$in": _oid_variants(lesson.get("course_id"))}, "active": True},
+            sort=[("version", -1)],
+        )
+    return schedule
+
+
+def _present_session(session: dict) -> dict:
+    """Expose a scheduler session with frontend-friendly ``planned_*`` fields.
+
+    The deterministic scheduler stores each session's ``date``/``day`` and its
+    period grid (``period_start``/``period_end``) or legacy clock times. These
+    are surfaced verbatim under explicit ``planned_*`` keys so the frontend
+    never has to fabricate a date or period. Original fields are retained for
+    backward compatibility. Values are taken as-is from the scheduler; nothing
+    is invented here.
+    """
+    out = dict(session)
+    out["planned_date"] = session.get("date")
+    out["planned_day"] = session.get("day")
+    out["planned_period_start"] = session.get("period_start")
+    out["planned_period_end"] = session.get("period_end")
+    out["planned_start_time"] = session.get("start_time")
+    out["planned_end_time"] = session.get("end_time")
+    return out
+
+
+def _present_schedule(schedule: dict | None) -> dict | None:
+    """Shape an active schedule for the lesson-plan response (Task #7-9).
+
+    Returns ``None`` when no schedule exists yet (a lesson plan can be read
+    before it is scheduled — its canonical topics still live in
+    ``structured_plan``). Otherwise returns the schedule identity plus its
+    sessions carrying explicit ``planned_*`` date/period fields.
+    """
+    if not schedule:
+        return None
+    serialized = serialize_schedule(schedule)
+    sessions = [
+        _present_session(s)
+        for s in (serialized.get("sessions") or [])
+        if isinstance(s, dict)
+    ]
+    return {
+        "schedule_id": serialized.get("_id"),
+        "version": serialized.get("version"),
+        "active": serialized.get("active"),
+        "status": serialized.get("status"),
+        "total_hours": serialized.get("total_hours"),
+        "scheduling_mode": serialized.get("scheduling_mode"),
+        "academic_year": serialized.get("academic_year"),
+        "semester": serialized.get("semester"),
+        "sessions": sessions,
+    }
 
 
 async def _load_authorized_lesson(lesson_id: str, current_user: dict) -> dict:
@@ -76,21 +174,57 @@ async def _load_authorized_lesson(lesson_id: str, current_user: dict) -> dict:
 
 
 @router.post("/generate/{syllabus_id}")
-async def generate(syllabus_id: str):
+async def generate(
+    syllabus_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Generate a lesson plan for a syllabus (authenticated, ownership-scoped).
+
+    The router already rejects unauthenticated callers (401). Here a faculty is
+    additionally restricted to syllabi belonging to a course they own (403);
+    admin/hod may generate for any course.
+    """
+    db = get_database()
+
+    # Ownership is enforced against the syllabus's parent course BEFORE any
+    # (potentially expensive) parsing / AI work happens. A malformed id -> 400,
+    # an unknown syllabus -> 404, an unowned syllabus -> 403.
+    syllabus_oid = to_object_id(syllabus_id, field="syllabus_id")
+    syllabus = await db.syllabi.find_one({"_id": syllabus_oid})
+    if syllabus is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Syllabus not found",
+        )
+    course_id = to_object_id(syllabus["course_id"], field="course_id")
+    await ensure_course_id_access(db, current_user, course_id)
+
     try:
         return await generate_and_save_lesson_plan(syllabus_id)
+    except SyllabusParseError as e:
+        # The syllabus structure could not be recovered. Refuse rather than
+        # letting an AI-invented structure through. The safe diagnostics explain
+        # what was (and was not) found without leaking internals.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": str(e), "diagnostics": getattr(e, "diagnostics", {})},
+        )
+    except LessonPlanCoverageError as e:
+        # The assembled plan did not cover every canonical topic — never save an
+        # incomplete plan.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": str(e), "coverage": e.coverage},
+        )
     except AIServiceUnavailableError as e:
-        # The Groq provider itself could not be reached / failed (network,
-        # timeout, auth, rate-limit, 5xx). Surface a safe 503 so callers can
-        # retry; provider internals are never leaked.
+        # Defensive: the generation pipeline degrades gracefully on AI failure,
+        # so this is not normally reachable. Kept so a future non-degrading path
+        # still surfaces a safe, retryable 503 (never provider internals).
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(e),
         )
     except AIGenerationError as e:
-        # The model responded but failed to return usable structured output
-        # (empty/malformed JSON or schema validation failure). Surface a safe
-        # 502 (bad upstream) rather than a misleading 404.
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(e),
@@ -136,8 +270,22 @@ async def get_lesson_plan(
     lesson_id: str,
     current_user: dict = Depends(get_current_user),
 ):
+    """Return a lesson plan together with its active schedule (Task #7-10).
+
+    The response always contains the full ``structured_plan`` (every canonical
+    topic, even ones not yet scheduled) plus a ``schedule`` object exposing the
+    deterministic planned date/day and planned period(s) for each scheduled
+    session. ``schedule`` is ``null`` when the plan has not been scheduled yet,
+    so unscheduled topics simply have no planned date/period rather than
+    disappearing.
+    """
     lesson = await _load_authorized_lesson(lesson_id, current_user)
-    return _serialize_lesson(lesson)
+    db = get_database()
+    schedule = await _active_schedule_for_lesson(db, lesson)
+
+    payload = _serialize_lesson(lesson)
+    payload["schedule"] = _present_schedule(schedule)
+    return payload
 
 
 @router.put("/{lesson_id}")
