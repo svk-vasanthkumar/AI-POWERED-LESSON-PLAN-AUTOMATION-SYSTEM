@@ -1,0 +1,141 @@
+.editor-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 64px - 64px); /* Rough calculation to fit viewport minus topbar and padding */
+}
+
+.editor-top-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  background-color: var(--surface-color);
+  padding: 16px 24px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+}
+
+.top-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.editor-title {
+  margin: 0 0 4px 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.editor-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.meta-divider {
+  color: var(--border-color);
+}
+
+.top-bar-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.btn-success {
+  background-color: var(--success);
+  color: white;
+}
+
+.btn-success:hover {
+  background-color: #059669;
+}
+
+/* Table Editor */
+.editor-content {
+  flex: 1;
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-table-wrapper {
+  flex: 1;
+  overflow: auto;
+}
+
+.editor-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.editor-table th {
+  position: sticky;
+  top: 0;
+  background-color: #f8fafc;
+  padding: 12px 16px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-color);
+  z-index: 10;
+  white-space: nowrap;
+}
+
+.editor-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+  vertical-align: top;
+}
+
+.editor-table tbody tr:hover {
+  background-color: #f8fafc;
+}
+
+/* Inline Inputs */
+.inline-input, .inline-textarea {
+  width: 100%;
+  border: 1px solid transparent;
+  background-color: transparent;
+  padding: 8px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text-primary);
+  transition: all 0.2s;
+}
+
+.inline-textarea {
+  resize: none;
+  min-height: 40px;
+  line-height: 1.4;
+}
+
+.inline-input:hover, .inline-textarea:hover {
+  border-color: var(--border-color);
+  background-color: white;
+}
+
+.inline-input:focus, .inline-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  background-color: white;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+.editor-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 400px;
+  color: var(--text-secondary);
+  gap: 16px;
+}

@@ -159,11 +159,14 @@ async def update_lesson_plan(
     return {"message": "Lesson plan updated successfully"}
 
 
-@router.delete(
-    "/{lesson_id}",
-    dependencies=[Depends(require_roles("admin", "hod"))],
-)
-async def remove_lesson_plan(lesson_id: str):
+@router.delete("/{lesson_id}")
+async def remove_lesson_plan(
+    lesson_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    # Enforce ownership: faculty can delete their own lesson plans, managers any
+    await _load_authorized_lesson(lesson_id, current_user)
+    
     try:
         deleted = await delete_lesson_plan(lesson_id)
     except LessonPlanInUseError as e:

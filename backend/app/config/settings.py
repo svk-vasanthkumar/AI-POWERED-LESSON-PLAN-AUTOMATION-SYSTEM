@@ -14,11 +14,17 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str
     GROQ_MODEL: str = "openai/gpt-oss-120b"
 
+    # --- Email (SMTP) ---
+    SMTP_SERVER: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+
     # --- CORS ---
     # Comma-separated list of allowed frontend origins. Defaults to the
-    # local Next.js dev server. Override in production via the environment
+    # local Vite dev server. Override in production via the environment
     # (e.g. FRONTEND_ORIGINS="https://app.example.com").
-    FRONTEND_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173"
+    FRONTEND_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:3000"
 
     # --- Uploads ---
     # Maximum accepted upload size in megabytes (development default: 10 MB).

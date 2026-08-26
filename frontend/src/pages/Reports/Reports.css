@@ -1,0 +1,210 @@
+.reports-page {
+  display: flex;
+  flex-direction: column;
+}
+
+.reports-content {
+  margin-top: 24px;
+}
+
+.report-placeholder-card {
+  background-color: var(--surface-color);
+  border: 1px dashed var(--border-color);
+  border-radius: 12px;
+  padding: 64px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.report-placeholder-card h3 {
+  margin: 0 0 8px 0;
+  color: var(--text-primary);
+}
+
+.max-w-md {
+  max-width: 28rem;
+  margin: 0 auto;
+}
+
+.detailed-reports-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  gap: 24px;
+}
+
+.report-card {
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.report-card-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: var(--background-color);
+}
+
+.report-card-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.report-card-body {
+  padding: 24px 20px;
+}
+
+.coverage-summary {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+.coverage-circle {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  border: 8px solid var(--primary-color);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.coverage-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.coverage-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.section-subtitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.coverage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.coverage-item-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.course-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.course-stats {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.progress-bar-container {
+  height: 8px;
+  background-color: var(--border-color);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.bg-success {
+  background-color: var(--success-color);
+}
+
+.bg-warning {
+  background-color: var(--warning-color);
+}
+
+.bg-danger {
+  background-color: var(--danger-color);
+}
+
+.workload-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.workload-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.workload-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.faculty-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.faculty-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: var(--primary-light);
+  color: var(--primary-color);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-weight: 600;
+  font-size: 18px;
+}
+
+.faculty-name {
+  margin: 0 0 4px 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.faculty-dept {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.stat-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background-color: var(--background-color);
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}

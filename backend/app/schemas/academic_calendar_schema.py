@@ -1,6 +1,6 @@
 from datetime import date as Date
 from typing import Literal
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from app.utils.calendar_dates import normalize_weekday, to_date
 
 
@@ -157,6 +157,41 @@ class AcademicCalendarCreate(BaseModel):
                 raise ValueError("Date range must fall within the semester bounds")
         return value
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "academic_year": "2023-2024",
+                "semester": 1,
+                "semester_start": "2023-08-01",
+                "semester_end": "2023-12-15",
+                "working_days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+                "monthly_working_days": [
+                    {
+                        "month": "August",
+                        "working_days": 22
+                    }
+                ],
+                "total_working_days": 90,
+                "holidays": [
+                    {
+                        "date": "2023-08-15",
+                        "name": "Independence Day"
+                    }
+                ],
+                "events": [],
+                "special_days": [
+                    {
+                        "date": "2023-09-05",
+                        "timetable_day": "Monday"
+                    }
+                ],
+                "internal_exams": ["2023-09-10"],
+                "raw_text": "Extracted text here...",
+                "extraction_method": "LLM",
+                "original_filename": "calendar.pdf"
+            }
+        }
+    )
 
 class AcademicCalendarUpdate(BaseModel):
     semester_start: Date | None = None

@@ -249,30 +249,50 @@ def build_available_dates(
     return available
 
 
-def build_slots_by_weekday(timetable_schedule) -> dict[str, list[tuple[int, int]]]:
+def build_slots_by_weekday(timetable_schedule) -> dict[str, list[dict]]:
     """Group timetable slots by weekday and validate their times (Phase 5).
 
-    Returns ``{weekday: [(start_minutes, end_minutes), ...]}`` with slots sorted
-    by start time so allocation is deterministic.
+    Returns ``{weekday: [{"start": start_minutes, "end": end_minutes, ...}, ...]}`` 
+    with slots sorted by start time so allocation is deterministic.
     """
     if not isinstance(timetable_schedule, list) or not timetable_schedule:
         raise SchedulerValidationError("Invalid timetable: no slots configured")
 
-    slots: dict[str, list[tuple[int, int]]] = {}
+    slots: dict[str, list[dict]] = {}
     for slot in timetable_schedule:
         if not isinstance(slot, dict):
             raise SchedulerValidationError("Invalid timetable: malformed slot")
         weekday = normalize_weekday(slot.get("day"))
-        start = parse_time_to_minutes(slot.get("start_time"), "start_time")
-        end = parse_time_to_minutes(slot.get("end_time"), "end_time")
+        
+        ps = slot.get("period_start")
+        pe = slot.get("period_end")
+        st = slot.get("start_time")
+        et = slot.get("end_time")
+        
+        if ps is not None and pe is not None:
+            # Pseudo-minutes for period-based slots: Period N = N * 60
+            start = int(ps) * 60
+            end = (int(pe) + 1) * 60
+        else:
+            start = parse_time_to_minutes(st, "start_time")
+            end = parse_time_to_minutes(et, "end_time")
+            
         if end <= start:
             raise SchedulerValidationError(
                 "Invalid timetable: end_time must be after start_time"
             )
-        slots.setdefault(weekday, []).append((start, end))
+            
+        slots.setdefault(weekday, []).append({
+            "start": start,
+            "end": end,
+            "period_start": ps,
+            "period_end": pe,
+            "start_time": st,
+            "end_time": et
+        })
 
     for weekday in slots:
-        slots[weekday].sort(key=lambda pair: pair[0])
+        slots[weekday].sort(key=lambda s: s["start"])
     return slots
 
 
@@ -284,7 +304,7 @@ def build_slots_by_weekday(timetable_schedule) -> dict[str, list[tuple[int, int]
 def allocate_sessions(
     topics: list[dict],
     available_dates: list[date],
-    slots_by_weekday: dict[str, list[tuple[int, int]]],
+    slots_by_weekday: dict[str, list[dict]],
 ) -> tuple[list[dict], list[dict]]:
     """Walk dates -> slots and pour topic hours into them in order (Phases 6-7).
 
@@ -308,14 +328,28 @@ def allocate_sessions(
         if index >= len(queue):
             break
         weekday_name = WEEKDAYS[day.weekday()]
-        for slot_start, slot_end in slots_by_weekday.get(weekday_name, []):
-            cursor = slot_start
+        for slot in slots_by_weekday.get(weekday_name, []):
+            cursor = slot["start"]
+            slot_end = slot["end"]
             while cursor < slot_end and index < len(queue):
                 block = min(slot_end - cursor, remaining)
                 block = int(round(block))
                 if block <= 0:
                     break
                 topic = queue[index]
+                
+                session_ps = None
+                session_pe = None
+                session_st = None
+                session_et = None
+                
+                if slot.get("period_start") is not None:
+                    session_ps = cursor // 60
+                    session_pe = (cursor + block - 1) // 60
+                else:
+                    session_st = minutes_to_hhmm(cursor)
+                    session_et = minutes_to_hhmm(cursor + block)
+                    
                 sessions.append(
                     {
                         "topic_id": topic["topic_id"],
@@ -324,8 +358,10 @@ def allocate_sessions(
                         "unit_title": topic["unit_title"],
                         "date": day.isoformat(),
                         "day": weekday_name,
-                        "start_time": minutes_to_hhmm(cursor),
-                        "end_time": minutes_to_hhmm(cursor + block),
+                        "start_time": session_st,
+                        "end_time": session_et,
+                        "period_start": session_ps,
+                        "period_end": session_pe,
                         "duration_hours": round(block / 60, 2),
                         "status": "pending",
                     }

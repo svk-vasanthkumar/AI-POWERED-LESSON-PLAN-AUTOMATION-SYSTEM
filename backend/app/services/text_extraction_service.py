@@ -10,7 +10,7 @@ from docx.text.paragraph import Paragraph
 from app.config.logger import logger
 
 
-SUPPORTED_EXTENSIONS = {".pdf", ".docx"}
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".jpg", ".jpeg", ".png"}
 METHOD_TEXT = "text"
 METHOD_OCR = "ocr"
 
@@ -32,10 +32,12 @@ def extract_text_with_method(filepath: str) -> tuple[str, str]:
     extension = Path(filepath).suffix.lower()
 
     if extension not in SUPPORTED_EXTENSIONS:
-        raise DocumentExtractionError("Only PDF and DOCX files are supported.")
+        raise DocumentExtractionError("Only PDF, DOCX, and image files are supported.")
 
     if extension == ".pdf":
         return _extract_pdf(filepath)
+    elif extension in {".jpg", ".jpeg", ".png"}:
+        return _extract_image(filepath)
 
     return _extract_docx(filepath)
 
@@ -142,6 +144,40 @@ def _extract_pdf_with_ocr(document) -> str:
             ) from exc
 
     return "\n\n".join(page_texts).strip()
+
+
+def _extract_image(filepath: str) -> tuple[str, str]:
+    from app.services.ocr_service import (
+        OCRProcessingError,
+        OCRUnavailableError,
+        run_ocr,
+    )
+
+    try:
+        with open(filepath, "rb") as f:
+            image_bytes = f.read()
+
+        text = run_ocr(image_bytes).strip()
+
+        if not _has_meaningful_text(text):
+            raise DocumentExtractionError(
+                "Unable to extract readable text from the image."
+            )
+
+        return text, METHOD_OCR
+
+    except DocumentExtractionError:
+        raise
+    except OCRUnavailableError as exc:
+        logger.exception("OCR engine unavailable for image processing")
+        raise DocumentOCRUnavailableError(
+            "OCR engine is unavailable for image processing."
+        ) from exc
+    except Exception as exc:
+        logger.exception("Image OCR extraction failed")
+        raise DocumentExtractionError(
+            "Unable to process the image file."
+        ) from exc
 
 
 def _iter_docx_block_items(parent):

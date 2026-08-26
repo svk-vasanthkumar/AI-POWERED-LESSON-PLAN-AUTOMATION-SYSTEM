@@ -81,12 +81,15 @@ async def upload_calendar(
     allowed_extensions = {
         ".pdf",
         ".docx",
+        ".jpg",
+        ".jpeg",
+        ".png",
     }
 
     if extension not in allowed_extensions:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Only PDF and DOCX academic calendar files are supported.",
+            detail="Only PDF, DOCX, and image academic calendar files are supported.",
         )
 
     temporary_path = None

@@ -1,35 +1,52 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import api from '../api/client';
+import { authService } from '../services/authService';
 
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(() => JSON.parse(localStorage.getItem('user') || 'null'));
-  const [token, setToken] = useState(() => localStorage.getItem('token') || null);
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchUser = async () => {
+      const token = localStorage.getItem('jwt_token');
+      if (token) {
+        try {
+          const profile = await authService.getProfile();
+          setUser(profile);
+        } catch (error) {
+          console.error("Failed to fetch user profile", error);
+          authService.logout();
+        }
+      }
+      setLoading(false);
+    };
+
+    fetchUser();
+  }, []);
 
   const login = async (email, password) => {
-    const response = await api.post('/auth/login', { email, password });
-    const { access_token } = response.data;
-    
-    setToken(access_token);
-    localStorage.setItem('token', access_token);
+    const data = await authService.login(email, password);
+    const profile = await authService.getProfile();
+    setUser(profile);
+    return profile;
+  };
 
-    // Fetch user profile
-    const profileRes = await api.get('/auth/profile');
-    setUser(profileRes.data.user);
-    localStorage.setItem('user', JSON.stringify(profileRes.data.user));
-    return profileRes.data.user;
+  const resetPassword = async (email, current_password, new_password) => {
+    return await authService.resetPassword(email, current_password, new_password);
   };
 
   const logout = () => {
-    setToken(null);
+    authService.logout();
     setUser(null);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+  };
+
+  const updateUser = (updatedUser) => {
+    setUser({ ...user, ...updatedUser });
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, isAuthenticated: !!token }}>
+    <AuthContext.Provider value={{ user, loading, login, resetPassword, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

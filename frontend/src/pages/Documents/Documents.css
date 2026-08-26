@@ -1,0 +1,121 @@
+.documents-page {
+  display: flex;
+  flex-direction: column;
+}
+
+.documents-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+  align-items: start;
+}
+
+.upload-card-wrapper {
+  margin-top: 16px;
+}
+
+.document-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.document-card {
+  display: flex;
+  align-items: center;
+  padding: 16px;
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  gap: 16px;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.document-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 6px rgba(0,0,0,0.04);
+}
+
+.doc-icon-wrapper {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.doc-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.doc-title {
+  margin: 0 0 4px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.doc-meta {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.doc-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-icon {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.btn-icon:hover {
+  background-color: #f3f4f6;
+  color: var(--text-primary);
+}
+
+.btn-icon.text-error:hover {
+  background-color: #fee2e2;
+  color: var(--error);
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 0;
+  color: var(--text-secondary);
+  text-align: center;
+  border: 1px dashed var(--border-color);
+  border-radius: 12px;
+  background-color: #f8fafc;
+}
+
+.empty-icon {
+  color: var(--border-color);
+  margin-bottom: 16px;
+}
+
+@media (max-width: 1024px) {
+  .documents-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -82,9 +82,11 @@ Strict rules:
 - Do NOT wrap the JSON in ```json fences or any other fences.
 - Do NOT add explanations, comments, or prose outside the JSON.
 - Follow the schema keys and nesting exactly.
-- Do NOT invent topics unrelated to the supplied syllabus.
+- Do NOT invent topics unrelated to the supplied syllabus. Use the actual topic content from the syllabus uploaded.
 - Preserve the unit and topic ordering from the syllabus where possible.
-- Estimate realistic teaching hours as numbers (estimated_hours numeric, unit_number integer).
+- CRITICAL REQUIREMENT: You MUST generate exactly 9 individual, distinct teaching topics for EVERY single unit in the syllabus. If there are 5 units, you must output exactly 45 topics in total (9 per unit).
+- Each topic MUST have `estimated_hours` set to exactly 1. Do NOT set `estimated_hours` higher than 1.
+- Do NOT group an entire unit into a single topic. Break the unit's content down across exactly 9 distinct hours. If a concept spans multiple hours, list it as "Part 1", "Part 2", etc.
 - Assign useful Bloom's taxonomy levels (Remember, Understand, Apply, Analyze, Evaluate, Create).
 - Choose appropriate teaching methods (e.g. Lecture, Discussion, Case Study, Lab).
 - Choose suitable assessment methods (e.g. Quiz, Assignment, Internal Assessment, Project).
