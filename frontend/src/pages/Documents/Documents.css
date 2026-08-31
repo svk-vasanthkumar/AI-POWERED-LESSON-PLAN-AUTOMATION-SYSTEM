@@ -34,7 +34,8 @@
 
 .document-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 6px rgba(0,0,0,0.04);
+  box-shadow: 0 4px 6px var(--shadow-color);
+  background-color: var(--surface-hover);
 }
 
 .doc-icon-wrapper {
@@ -87,12 +88,12 @@
 }
 
 .btn-icon:hover {
-  background-color: #f3f4f6;
+  background-color: var(--surface-hover);
   color: var(--text-primary);
 }
 
 .btn-icon.text-error:hover {
-  background-color: #fee2e2;
+  background-color: var(--error-light);
   color: var(--error);
 }
 
