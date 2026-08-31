@@ -96,9 +96,23 @@ async def single_syllabus(
 
 @router.delete(
     "/{syllabus_id}",
-    dependencies=[Depends(require_roles("admin", "hod"))],
+    dependencies=[Depends(require_roles("admin", "hod", "faculty"))],
 )
-async def remove_syllabus(syllabus_id: str):
+async def remove_syllabus(
+    syllabus_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    db = get_database()
+    raw = await get_syllabus_raw(syllabus_id)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Syllabus not found")
+        
+    course = await db.courses.find_one({"_id": raw.get("course_id")})
+    if course is None:
+        course = await db.courses.find_one({"_id": str(raw.get("course_id"))})
+        
+    await ensure_course_access(db, current_user, course)
+    
     try:
         deleted = await delete_syllabus(syllabus_id)
     except SyllabusInUseError as e:
