@@ -22,6 +22,7 @@ from app.api.v1.academic_calendar import router as calendar_router
 from app.api.v1.timetable import router as timetable_router
 from app.api.v1.scheduler import router as scheduler_router
 from app.api.v1.reports import router as reports_router
+from app.api.v1.notifications import router as notifications_router
 from app.utils.timetable_periods import configure_period_times
 
 
@@ -75,6 +76,7 @@ app.include_router(calendar_router)
 app.include_router(timetable_router)
 app.include_router(scheduler_router)
 app.include_router(reports_router)
+app.include_router(notifications_router)
 
 
 @app.get("/")
