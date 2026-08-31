@@ -50,20 +50,16 @@ _SCHEMA_HINT = """{
         {
           "topic_id": "U1-T1",
           "topic": "string",
-          "subtopics": ["string"],
           "estimated_hours": 1,
           "bloom_level": "Understand",
           "learning_outcomes": ["CO1"],
           "teaching_methods": ["Lecture"],
-          "assessment_methods": ["Quiz"],
-          "references": ["string"]
+          "assessment_methods": ["Quiz"]
         }
       ]
     }
   ],
-  "overall_teaching_methods": ["string"],
-  "overall_assessment_methods": ["string"],
-  "references": ["string"]
+  "references": ["T1: Full Textbook Name by Author", "R1: Full Reference Name by Author"]
 }"""
 
 
@@ -81,16 +77,18 @@ Strict rules:
 - Do NOT return Markdown.
 - Do NOT wrap the JSON in ```json fences or any other fences.
 - Do NOT add explanations, comments, or prose outside the JSON.
+- CRITICAL REQUIREMENT: You MUST generate EXACTLY 9 individual, distinct teaching topics for EVERY single unit in the syllabus. If there are 5 units, you must output EXACTLY 45 topics in total (9 per unit).
+- ABSOLUTE MANDATE: You MUST generate ALL 5 UNITS. Do not stop at Unit 1. Do not stop at Unit 2. Generate Unit 1, 2, 3, 4, and 5.
+- ABSOLUTE MANDATE: Each unit MUST contain exactly 9 topics. Not 6, not 8, but exactly 9 topics.
 - Follow the schema keys and nesting exactly.
 - Do NOT invent topics unrelated to the supplied syllabus. Use the actual topic content from the syllabus uploaded.
 - Preserve the unit and topic ordering from the syllabus where possible.
-- CRITICAL REQUIREMENT: You MUST generate exactly 9 individual, distinct teaching topics for EVERY single unit in the syllabus. If there are 5 units, you must output exactly 45 topics in total (9 per unit).
+- CRITICAL REQUIREMENT: Do NOT stop early. Do NOT summarize or condense units. You MUST generate ALL units present in the syllabus.
 - Each topic MUST have `estimated_hours` set to exactly 1. Do NOT set `estimated_hours` higher than 1.
 - Do NOT group an entire unit into a single topic. Break the unit's content down across exactly 9 distinct hours. If a concept spans multiple hours, list it as "Part 1", "Part 2", etc.
 - Assign useful Bloom's taxonomy levels (Remember, Understand, Apply, Analyze, Evaluate, Create).
-- Choose appropriate teaching methods (e.g. Lecture, Discussion, Case Study, Lab).
 - Choose suitable assessment methods (e.g. Quiz, Assignment, Internal Assessment, Project).
-- Base references on the syllabus / reference material when available; otherwise use realistic academic references.
+- REFERENCES: In the root `references` array, list the textbooks and reference books from the syllabus using codes like "T1: Full Book Name by Author, Publisher, Year", "R1: Full Reference Name". Use T for textbooks, R for references. Base these on the syllabus reference material when available; otherwise use realistic academic references for the subject.
 
 Syllabus:
 
@@ -104,11 +102,15 @@ def _extract_json_payload(raw: str) -> str:
     Handles the common failure modes even though we request json_object:
     - ```json ... ``` (or plain ``` ... ```) fenced blocks
     - leading/trailing prose around the object
+    - Qwen3 <think>...</think> reasoning blocks
     """
     if raw is None:
         raise ValueError("Empty AI response")
 
     candidate = raw.strip()
+
+    # Strip Qwen3 thinking blocks: <think>...</think>
+    candidate = re.sub(r"<think>.*?</think>", "", candidate, flags=re.DOTALL).strip()
 
     # Strip fenced code blocks like ```json\n{...}\n``` or ```\n{...}\n```.
     fence = re.search(r"```(?:json)?\s*(.*?)\s*```", candidate, re.DOTALL | re.IGNORECASE)
@@ -155,12 +157,15 @@ async def generate_lesson_plan(text: str) -> LessonPlanAIOutput:
     try:
         response = client.chat.completions.create(
             model=_MODEL,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": "/no_think"},
+                {"role": "user", "content": prompt},
+            ],
             temperature=0.5,
-            response_format={"type": "json_object"},
+            max_tokens=6000,
         )
     except GroqError as exc:
-        logger.error("Groq provider call failed: %s", type(exc).__name__)
+        logger.error("Groq provider call failed: %s — %s", type(exc).__name__, exc)
         logger.debug("Groq failure detail", exc_info=exc)
         raise AIServiceUnavailableError(
             "The AI service is temporarily unavailable. Please try again later."
