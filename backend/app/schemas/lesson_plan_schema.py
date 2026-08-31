@@ -2,7 +2,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class LessonPlanUpdate(BaseModel):
-    lesson_plan: str = Field(..., min_length=10)
+    lesson_plan: str | None = Field(default=None, min_length=10)
+    sessions: list[dict] | None = None
+    status: str | None = None
 
 
 # ---------------------------------------------------------------------------
