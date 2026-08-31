@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
     GROQ_API_KEY: str
-    GROQ_MODEL: str = "openai/gpt-oss-120b"
+    GROQ_MODEL: str = "qwen/qwen3.8-27b"
 
     # --- Email (SMTP) ---
     SMTP_SERVER: str = ""
