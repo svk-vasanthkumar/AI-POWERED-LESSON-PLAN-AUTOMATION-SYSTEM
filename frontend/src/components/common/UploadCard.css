@@ -34,12 +34,12 @@
   text-align: center;
   cursor: pointer;
   transition: all 0.2s ease;
-  background-color: #f8fafc;
+  background-color: var(--surface-hover);
 }
 
 .upload-zone:hover, .upload-zone.drag-active {
   border-color: var(--accent);
-  background-color: #eff6ff;
+  background-color: var(--info-light);
 }
 
 .upload-icon {
@@ -118,7 +118,7 @@
 }
 
 .remove-file-btn:hover {
-  background-color: #f3f4f6;
+  background-color: var(--surface-hover);
   color: var(--error);
 }
 
