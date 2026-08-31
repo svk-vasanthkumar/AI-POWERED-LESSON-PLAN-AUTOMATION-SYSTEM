@@ -5,6 +5,7 @@ from pymongo.errors import DuplicateKeyError
 from app.database.mongodb import get_database
 from app.models.course_model import create_course_document
 from app.utils.object_id import to_object_id
+from app.services.notification_service import create_notification
 
 
 class CourseInUseError(Exception):
@@ -97,16 +98,26 @@ async def create_course(data):
     document = create_course_document(
         data.course_code,
         data.course_name,
-        data.department,
-        data.semester,
-        data.credits,
-        faculty["_id"],
+        department=data.department,
+        semester=data.semester,
+        credits=data.credits,
+        faculty_id=faculty_oid,
+        academic_year=data.academic_year,
     )
 
     try:
         result = await db.courses.insert_one(document)
     except DuplicateKeyError:
         raise ValueError("Course already exists")
+
+    # Fetch user_id for the faculty to send a notification
+    if faculty and "user_id" in faculty:
+        await create_notification(
+            user_id=str(faculty["user_id"]),
+            title="New Course Assigned",
+            message=f"You have been assigned to teach {data.course_name} ({data.course_code}).",
+            type="info"
+        )
 
     return str(result.inserted_id)
 
@@ -172,6 +183,7 @@ async def update_course(course_id: str, data):
         "semester": data.semester,
         "credits": data.credits,
         "faculty_id": faculty["_id"],
+        "academic_year": data.academic_year,
         "updated_at": datetime.now(UTC),
     }
 
@@ -212,3 +224,74 @@ async def delete_course(course_id: str) -> int:
 
     result = await db.courses.delete_one({"_id": course_oid})
     return result.deleted_count
+
+
+async def clone_course(course_id: str, new_faculty_id: str, new_academic_year: str) -> str:
+    """Clone a course along with its associated syllabus and lesson plan."""
+    db = get_database()
+    course_oid = to_object_id(course_id, field="course_id")
+    faculty_oid = to_object_id(new_faculty_id, field="new_faculty_id")
+
+    # 1. Clone Course
+    course = await db.courses.find_one({"_id": course_oid})
+    if not course:
+        raise ValueError("Original course not found")
+        
+    faculty = await db.faculty.find_one({"_id": faculty_oid})
+    if not faculty:
+        raise ValueError("New faculty not found")
+
+    new_course = create_course_document(
+        course_code=course["course_code"],
+        course_name=course["course_name"],
+        department=course["department"],
+        semester=course["semester"],  # Keeps same semester
+        credits=course["credits"],
+        faculty_id=faculty_oid,
+        academic_year=new_academic_year,
+    )
+    result = await db.courses.insert_one(new_course)
+    new_course_id = result.inserted_id
+
+    # 2. Clone Syllabus (latest one)
+    syllabus = await db.syllabi.find_one(
+        {"course_id": course_oid}, sort=[("created_at", -1)]
+    )
+    new_syllabus_id = None
+    if syllabus:
+        from app.models.syllabus_model import create_syllabus_document
+        new_syllabus = create_syllabus_document(
+            course_id=new_course_id,
+            filename=syllabus.get("filename"),
+            filepath=syllabus.get("filepath"),
+            extracted_text=syllabus.get("text"),
+            original_filename=syllabus.get("original_filename"),
+            extraction_method=syllabus.get("extraction_method", "text"),
+        )
+        s_result = await db.syllabi.insert_one(new_syllabus)
+        new_syllabus_id = s_result.inserted_id
+
+    # 3. Clone Lesson Plan (latest one)
+    if new_syllabus_id:
+        lesson_plan = await db.lesson_plans.find_one(
+            {"course_id": course_oid}, sort=[("created_at", -1)]
+        )
+        if lesson_plan:
+            from app.models.lesson_plan_model import create_lesson_plan_document
+            new_lp = create_lesson_plan_document(
+                course_id=new_course_id,
+                syllabus_id=new_syllabus_id,
+                lesson_plan=lesson_plan.get("lesson_plan"),
+                structured_plan=lesson_plan.get("structured_plan"),
+            )
+            await db.lesson_plans.insert_one(new_lp)
+            
+    if faculty and "user_id" in faculty:
+        await create_notification(
+            user_id=str(faculty["user_id"]),
+            title="Course Reassigned",
+            message=f"You have been assigned to teach {course['course_name']} ({course['course_code']}) for the {new_academic_year} academic year.",
+            type="info"
+        )
+            
+    return str(new_course_id)
