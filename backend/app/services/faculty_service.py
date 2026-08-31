@@ -173,6 +173,29 @@ async def update_faculty(faculty_id: str, data):
 
     if not update_data:
         return 0
+        
+    faculty = await db.faculty.find_one({"_id": obj_id})
+    if not faculty:
+        return 0
+
+    if "faculty_id" in update_data:
+        existing = await db.faculty.find_one({"faculty_id": update_data["faculty_id"], "_id": {"$ne": obj_id}})
+        if existing:
+            raise ValueError("Faculty ID already exists")
+            
+    if "email" in update_data:
+        update_data["email"] = update_data["email"].lower()
+        if faculty.get("email") != update_data["email"]:
+            existing_user = await db.users.find_one({"email": update_data["email"]})
+            if existing_user:
+                raise ValueError("Email already in use by another user")
+            
+            # Update the linked user account if it exists
+            if faculty.get("user_id"):
+                await db.users.update_one(
+                    {"_id": ObjectId(faculty["user_id"])},
+                    {"$set": {"email": update_data["email"], "updated_at": datetime.now(UTC)}}
+                )
 
     update_data["updated_at"] = datetime.now(UTC)
 
