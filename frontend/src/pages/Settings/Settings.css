@@ -33,12 +33,12 @@
 }
 
 .settings-tab:hover {
-  background-color: #f8fafc;
+  background-color: var(--surface-hover);
   color: var(--text-primary);
 }
 
 .settings-tab.active {
-  background-color: #f1f5f9;
+  background-color: var(--surface-active);
   color: var(--primary);
   font-weight: 600;
 }
@@ -80,16 +80,16 @@
 }
 
 /* The slider */
-.slider {
+.toggle-slider {
   position: absolute;
   cursor: pointer;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: #ccc;
-  -webkit-transition: .4s;
+  background-color: var(--border-color);
   transition: .4s;
+  border-radius: 34px;
 }
 
 .slider:before {
