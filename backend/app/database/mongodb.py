@@ -78,7 +78,6 @@ def get_database():
 _UNIQUE_INDEXES = (
     ("users", "email", "uniq_users_email"),
     ("faculty", "faculty_id", "uniq_faculty_faculty_id"),
-    ("courses", "course_code", "uniq_courses_course_code"),
     (
         "academic_calendar",
         [("academic_year", 1), ("semester", 1)],
@@ -131,7 +130,6 @@ async def init_indexes(db=None):
     Indexes created:
       - ``users.email``                       -> unique
       - ``faculty.faculty_id``                -> unique
-      - ``courses.course_code``               -> unique
       - ``academic_calendar``                 -> unique compound
                                                  (academic_year + semester)
       - plus the non-unique lookup indexes in ``_LOOKUP_INDEXES`` covering the

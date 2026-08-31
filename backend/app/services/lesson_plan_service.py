@@ -155,8 +155,12 @@ async def generate_and_save_lesson_plan(syllabus_id: str) -> dict:
     # Flatten to the backward-compatible newline-delimited topic string.
     lesson_plan_text = structured_to_topic_text(structured)
 
-    # Inherit the course relationship from the parent syllabus, normalized to an
-    # ObjectId even if the parent stored course_id as a legacy string.
+    # JSON-safe dict for MongoDB storage and API responses.
+    structured_dict = structured.model_dump(mode="json")
+
+    # Inherit the course relationship from the parent syllabus. Normalize
+    # through the helper so it is stored as an ObjectId even if the parent
+    # syllabus stored course_id as a legacy string.
     course_id = to_object_id(syllabus["course_id"], field="course_id")
 
     document = create_lesson_plan_document(
@@ -185,12 +189,9 @@ async def generate_and_save_lesson_plan(syllabus_id: str) -> dict:
 
 
 async def delete_lesson_plan(lesson_id: str) -> int:
-    """Delete a lesson plan, refusing to orphan dependent records.
-
-    Raises :class:`LessonPlanInUseError` (-> 409) when any generated schedule
-    still references the lesson plan via ``lesson_plan_id``. Returns the
-    deleted count (0 -> 404) otherwise. A malformed id raises via
-    ``to_object_id`` (-> 400), preserving the established endpoint contract.
+    """Deletes the lesson plan and cascades deletion to any generated schedules that 
+    reference it (hassle-free deletion). Returns the deleted count (0 -> 404) 
+    otherwise. A malformed id raises via ``to_object_id`` (-> 400).
     """
     db = get_database()
     lesson_oid = to_object_id(lesson_id, field="lesson_id")
@@ -203,7 +204,10 @@ async def delete_lesson_plan(lesson_id: str) -> int:
         {"lesson_plan_id": {"$in": _id_variants(lesson_oid)}}
     )
     if dependent_schedules:
-        raise LessonPlanInUseError({"generated schedule(s)": dependent_schedules})
+        # Cascade deletion: automatically remove any generated schedules referencing this lesson plan
+        await db.generated_schedules.delete_many(
+            {"lesson_plan_id": {"$in": _id_variants(lesson_oid)}}
+        )
 
     result = await db.lesson_plans.delete_one({"_id": lesson_oid})
     return result.deleted_count

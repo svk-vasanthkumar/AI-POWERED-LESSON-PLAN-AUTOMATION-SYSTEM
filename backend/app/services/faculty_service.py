@@ -85,6 +85,22 @@ async def create_faculty(data):
         if existing_user_faculty:
             raise ValueError("Faculty profile already exists for this user")
         user_id = user["_id"]
+    elif getattr(data, "password", None):
+        from app.auth.password import hash_password
+        from app.models.user_model import create_user_document
+        
+        user_document = create_user_document(
+            name=data.name,
+            email=data.email.lower(),
+            password=hash_password(data.password),
+            role="faculty",
+            department=data.department,
+        )
+        try:
+            user_result = await db.users.insert_one(user_document)
+            user_id = user_result.inserted_id
+        except DuplicateKeyError:
+            raise ValueError("User with this email already exists")
 
     document = create_faculty_document(
         user_id=user_id,
@@ -113,8 +129,12 @@ async def get_all_faculty():
 
     async for doc in db.faculty.find():
         doc["_id"] = str(doc["_id"])
+        doc["has_logged_in"] = False
         if "user_id" in doc:
             doc["user_id"] = str(doc["user_id"])
+            user_doc = await db.users.find_one({"_id": ObjectId(doc["user_id"])})
+            if user_doc:
+                doc["has_logged_in"] = user_doc.get("has_logged_in", False)
         faculty.append(doc)
 
     return faculty
@@ -122,18 +142,19 @@ async def get_all_faculty():
 
 async def get_faculty(faculty_id: str):
     db = get_database()
-
     try:
-        obj_id = ObjectId(faculty_id)
-    except InvalidId:
-        return None
+        faculty = await db.faculty.find_one({"_id": ObjectId(faculty_id)})
+    except Exception:
+        faculty = await db.faculty.find_one({"faculty_id": faculty_id})
 
-    faculty = await db.faculty.find_one({"_id": obj_id})
     if faculty:
         faculty["_id"] = str(faculty["_id"])
+        faculty["has_logged_in"] = False
         if "user_id" in faculty:
             faculty["user_id"] = str(faculty["user_id"])
-
+            user_doc = await db.users.find_one({"_id": ObjectId(faculty["user_id"])})
+            if user_doc:
+                faculty["has_logged_in"] = user_doc.get("has_logged_in", False)
     return faculty
 
 
@@ -152,6 +173,29 @@ async def update_faculty(faculty_id: str, data):
 
     if not update_data:
         return 0
+        
+    faculty = await db.faculty.find_one({"_id": obj_id})
+    if not faculty:
+        return 0
+
+    if "faculty_id" in update_data:
+        existing = await db.faculty.find_one({"faculty_id": update_data["faculty_id"], "_id": {"$ne": obj_id}})
+        if existing:
+            raise ValueError("Faculty ID already exists")
+            
+    if "email" in update_data:
+        update_data["email"] = update_data["email"].lower()
+        if faculty.get("email") != update_data["email"]:
+            existing_user = await db.users.find_one({"email": update_data["email"]})
+            if existing_user:
+                raise ValueError("Email already in use by another user")
+            
+            # Update the linked user account if it exists
+            if faculty.get("user_id"):
+                await db.users.update_one(
+                    {"_id": ObjectId(faculty["user_id"])},
+                    {"$set": {"email": update_data["email"], "updated_at": datetime.now(UTC)}}
+                )
 
     update_data["updated_at"] = datetime.now(UTC)
 
@@ -161,6 +205,58 @@ async def update_faculty(faculty_id: str, data):
     )
 
     return result.modified_count
+
+
+async def send_welcome_email(faculty_id: str, password: str) -> bool:
+    db = get_database()
+    try:
+        faculty = await db.faculty.find_one({"_id": ObjectId(faculty_id)})
+    except Exception:
+        faculty = await db.faculty.find_one({"faculty_id": faculty_id})
+        
+    if not faculty:
+        return False
+        
+    email_address = faculty.get("email")
+    name = faculty.get("name")
+    
+    if "user_id" in faculty:
+        from app.auth.password import hash_password
+        await db.users.update_one(
+            {"_id": faculty["user_id"]},
+            {"$set": {"password": hash_password(password)}}
+        )
+    
+    # Use the real email service
+    from app.services.email_service import send_email
+    from app.config.settings import settings
+    frontend_url = settings.frontend_origins_list[0] if settings.frontend_origins_list else "http://localhost:5173"
+    login_link = f"{frontend_url}/login"
+    
+    subject = "Welcome to the EduAI Platform!"
+    body_text = (
+        f"Dear {name},\n\n"
+        f"Your account is created. Please login with your email and the password is the admin given password: {password}\n\n"
+        f"For security purposes, you will be required to change this password on your first login.\n\n"
+        f"Best regards,\nEduAI System"
+    )
+    
+    body_html = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #4f46e5;">Welcome to EduAI!</h2>
+        <p>Dear {name},</p>
+        <p>Your account is created. Please login with your email and the password is the admin given password: <strong>{password}</strong></p>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="{login_link}" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Login to your Account</a>
+        </div>
+        <p style="font-weight: bold; color: #e11d48;">For security purposes, you will be required to change this password on your first login.</p>
+        <p>Best regards,<br>EduAI System</p>
+      </body>
+    </html>
+    """
+    
+    return send_email(email_address, subject, body_text, body_html)
 
 
 async def delete_faculty(faculty_id: str):

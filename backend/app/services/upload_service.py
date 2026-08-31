@@ -23,6 +23,9 @@ ALLOWED_TYPES: dict[str, str] = {
         "application/vnd.openxmlformats-officedocument"
         ".wordprocessingml.document"
     ),
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
 }
 
 # Read files in bounded chunks so an oversized upload is rejected without
@@ -47,7 +50,7 @@ def _validate_extension(filename: str | None) -> str:
     if ext not in ALLOWED_TYPES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Unsupported file type. Only .pdf and .docx are allowed.",
+            detail="Unsupported file type. Only .pdf, .docx, .jpg, .jpeg, and .png are allowed.",
         )
 
     return ext

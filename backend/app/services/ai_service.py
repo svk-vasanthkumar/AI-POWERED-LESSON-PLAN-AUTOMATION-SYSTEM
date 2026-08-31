@@ -94,90 +94,63 @@ BLOOM_LEVELS = (
 )
 
 _SCHEMA_HINT = """{
-  "topics": [
+  "course_title": "string",
+  "course_objectives": ["string"],
+  "learning_outcomes": [
+    {"outcome_id": "CO1", "description": "string", "bloom_level": "Understand"}
+  ],
+  "units": [
     {
-      "topic_id": "U1-T1",
-      "subtopics": ["string"],
-      "bloom_level": "Understand",
-      "learning_outcomes": ["CO1"],
-      "teaching_methods": ["Lecture"],
-      "assessment_methods": ["Quiz"]
+      "unit_number": 1,
+      "unit_title": "string",
+      "topics": [
+        {
+          "topic_id": "U1-T1",
+          "topic": "string",
+          "subtopics": ["string"],
+          "estimated_hours": 1,
+          "bloom_level": "Understand",
+          "learning_outcomes": ["CO1"],
+          "teaching_methods": ["Lecture"],
+          "assessment_methods": ["Quiz"],
+          "references": ["string"]
+        }
+      ]
     }
   ],
-  "outcomes": [{"outcome_id": "CO1", "bloom_level": "Apply"}],
   "overall_teaching_methods": ["string"],
-  "overall_assessment_methods": ["string"]
+  "overall_assessment_methods": ["string"],
+  "references": ["string"]
 }"""
 
 
-# ---------------------------------------------------------------------------
-# Prompt construction
-# ---------------------------------------------------------------------------
+def _build_prompt(text: str) -> str:
+    return f"""You are an experienced college professor and curriculum designer.
 
+Based ONLY on the syllabus provided below, produce a structured lesson plan.
 
-def build_enrichment_prompt(canonical: CanonicalSyllabus) -> str:
-    """Build the enrichment prompt from the canonical syllabus.
-
-    The prompt lists the exact topic ids that exist. The model is told, in the
-    strongest terms available, that it may not invent structure, hours or
-    references — those are supplied by the syllabus and are not its concern.
-    """
-    lines: list[str] = []
-    for unit in canonical.units:
-        lines.append(f"Unit {unit.unit_number}: {unit.unit_title}".rstrip(": "))
-        for topic in unit.topics:
-            lines.append(f"  {topic.topic_id} | {topic.topic}")
-    topic_listing = "\n".join(lines)
-
-    outcome_listing = (
-        "\n".join(
-            f"  {outcome.outcome_id}: {outcome.description}".rstrip(": ")
-            for outcome in canonical.course_outcomes
-        )
-        or "  (none defined in the syllabus)"
-    )
-
-    course_label = " ".join(
-        part for part in (canonical.course_code, canonical.course_title) if part
-    )
-
-    return f"""You are an experienced college professor advising on teaching pedagogy.
-
-The course structure below is FIXED. It was extracted from the official
-syllabus. Your ONLY task is to attach pedagogical metadata to the topics that
-already exist.
-
-Course: {course_label}
-
-Topics (topic_id | topic name):
-{topic_listing}
-
-Course outcomes defined by the syllabus:
-{outcome_listing}
-
-Return a single JSON object that EXACTLY matches this schema:
+Return your answer as a single JSON object that EXACTLY matches this schema:
 
 {_SCHEMA_HINT}
 
-Absolute rules:
-- Return JSON only: no Markdown, no code fences, no prose before or after.
-- Use ONLY the topic_id values listed above. Do NOT invent new topic ids.
-- Do NOT add, remove, rename, merge, split or reorder topics.
-- Do NOT return teaching hours, dates, units or textbook references. Those come
-  from the syllabus and are not yours to decide.
-- Do NOT return topic names; the topic_id is enough to identify a topic.
-- learning_outcomes must reference only the course outcome ids listed above.
-- bloom_level must be one of: {", ".join(BLOOM_LEVELS)}.
-- Choose realistic teaching methods (e.g. Lecture, Discussion, Case Study,
-  Demonstration, Lab, Flipped Classroom, Problem Solving).
-- Choose realistic assessment methods (e.g. Quiz, Assignment, Internal
-  Assessment, Seminar, Project, Viva).
+Strict rules:
+- Return JSON only. Output nothing before or after the JSON object.
+- Do NOT return Markdown.
+- Do NOT wrap the JSON in ```json fences or any other fences.
+- Do NOT add explanations, comments, or prose outside the JSON.
+- Follow the schema keys and nesting exactly.
+- Do NOT invent topics unrelated to the supplied syllabus.
+- Preserve the unit and topic ordering from the syllabus where possible.
+- Estimate realistic teaching hours as numbers (estimated_hours numeric, unit_number integer).
+- Assign useful Bloom's taxonomy levels (Remember, Understand, Apply, Analyze, Evaluate, Create).
+- Choose appropriate teaching methods (e.g. Lecture, Discussion, Case Study, Lab).
+- Choose suitable assessment methods (e.g. Quiz, Assignment, Internal Assessment, Project).
+- Base references on the syllabus / reference material when available; otherwise use realistic academic references.
+
+Syllabus:
+
+{text}
 """
-
-
-# ---------------------------------------------------------------------------
-# Provider plumbing
-# ---------------------------------------------------------------------------
 
 
 def _extract_json_payload(raw: str) -> str:
@@ -186,11 +159,15 @@ def _extract_json_payload(raw: str) -> str:
     Handles the common failure modes even though we request json_object:
     - ```json ... ``` (or plain ``` ... ```) fenced blocks
     - leading/trailing prose around the object
+    - Qwen3 <think>...</think> reasoning blocks
     """
     if raw is None:
         raise ValueError("Empty AI response")
 
     candidate = raw.strip()
+
+    # Strip Qwen3 thinking blocks: <think>...</think>
+    candidate = re.sub(r"<think>.*?</think>", "", candidate, flags=re.DOTALL).strip()
 
     fence = re.search(r"```(?:json)?\s*(.*?)\s*```", candidate, re.DOTALL | re.IGNORECASE)
     if fence:
@@ -205,81 +182,42 @@ def _extract_json_payload(raw: str) -> str:
     return candidate
 
 
-def _provider_status_code(exc: Exception) -> int | None:
-    """Extract an HTTP status code from a Groq SDK exception, if present."""
-    for attribute in ("status_code", "http_status", "code"):
-        value = getattr(exc, attribute, None)
-        if isinstance(value, int):
-            return value
-        if isinstance(value, str) and value.isdigit():
-            return int(value)
-    response = getattr(exc, "response", None)
-    status = getattr(response, "status_code", None)
-    return status if isinstance(status, int) else None
+def structured_to_topic_text(plan: LessonPlanAIOutput) -> str:
+    """Flatten the structured plan into an ordered newline-delimited topic list.
 
-
-def classify_provider_error(exc: Exception) -> AIGenerationError:
-    """Map a provider exception onto this module's error taxonomy.
-
-    Classification uses the SDK exception type first (``AuthenticationError``,
-    ``RateLimitError``, ``BadRequestError`` …) and falls back to the HTTP status
-    code, so it keeps working across SDK versions. Provider messages are never
-    forward to the client.
+    This preserves backward compatibility with existing consumers (e.g. the
+    scheduler, which splits ``lesson_plan`` on newlines into teachable topics)
+    without touching those services.
     """
-    name = type(exc).__name__
-    status = _provider_status_code(exc)
-
-    if "Authentication" in name or "Permission" in name or status in (401, 403):
-        return AIConfigurationError(
-            "The AI service is not configured correctly. Please contact an administrator."
-        )
-    if "RateLimit" in name or status == 429:
-        return AIRateLimitError(
-            "The AI service is rate limited right now. Please retry in a moment."
-        )
-    if "BadRequest" in name or "UnprocessableEntity" in name or status in (400, 422):
-        # Our request was rejected (e.g. prompt too long for the model). This is
-        # an upstream contract problem, not a transient outage.
-        return AIGenerationError(
-            "The AI service could not process this request. Please try again."
-        )
-    if "NotFound" in name or status == 404:
-        return AIConfigurationError(
-            "The configured AI model is unavailable. Please contact an administrator."
-        )
-    return AIServiceUnavailableError(
-        "The AI service is temporarily unavailable. Please try again later."
-    )
+    lines: list[str] = []
+    for unit in plan.units:
+        for topic in unit.topics:
+            if topic.topic and topic.topic.strip():
+                lines.append(topic.topic.strip())
+    return "\n".join(lines)
 
 
-def _call_groq(prompt: str) -> str | None:
-    """Synchronous Groq call. Executed on a worker thread by the caller."""
-    response = client.chat.completions.create(
-        model=_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-        response_format={"type": "json_object"},
-    )
-    if response is None or not response.choices:
-        return None
-    return response.choices[0].message.content
+async def generate_lesson_plan(text: str) -> LessonPlanAIOutput:
+    """Generate a validated, structured lesson plan from syllabus text.
 
-
-async def request_enrichment(canonical: CanonicalSyllabus) -> LessonPlanEnrichment:
-    """Ask the model for pedagogy metadata for the canonical topics.
-
-    Raises one of the module's error classes on failure; the caller decides
-    whether to degrade gracefully (persist the canonical plan without pedagogy)
-    or surface the error.
+    Returns a ``LessonPlanAIOutput`` instance. Raises ``ValueError`` with a
+    safe, generic message if the model output cannot be parsed or validated;
+    the underlying detail is logged server-side only.
     """
-    prompt = build_enrichment_prompt(canonical)
+    prompt = _build_prompt(text)
 
+    # Talk to Groq defensively: any transport/provider failure (network,
+    # timeout, auth, rate-limit, 5xx) must become a controlled, safe error
+    # rather than escaping as a generic 500 that could leak internals.
     try:
-        # The Groq SDK is synchronous; running it inline would block the event
-        # loop (and therefore every other request) for the whole model call.
-        raw = await asyncio.to_thread(_call_groq, prompt)
+        response = client.chat.completions.create(
+            model=_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.5,
+            response_format={"type": "json_object"},
+        )
     except GroqError as exc:
-        logger.error("Groq provider call failed: %s", type(exc).__name__)
+        logger.error("Groq provider call failed: %s — %s", type(exc).__name__, exc)
         logger.debug("Groq failure detail", exc_info=exc)
         raise classify_provider_error(exc) from exc
     except (AttributeError, IndexError, TypeError) as exc:

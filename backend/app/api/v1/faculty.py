@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.auth.dependencies import get_current_user, require_roles
-from app.schemas.faculty_schema import FacultyCreate, FacultyUpdate
+from app.schemas.faculty_schema import FacultyCreate, FacultyUpdate, EmailCredentials
 from app.services.faculty_service import (
     FacultyInUseError,
     create_faculty,
@@ -9,6 +9,7 @@ from app.services.faculty_service import (
     get_all_faculty,
     get_faculty,
     update_faculty,
+    send_welcome_email,
 )
 
 # Every faculty endpoint requires a valid Bearer JWT.
@@ -59,7 +60,13 @@ async def single_faculty(faculty_id: str):
     dependencies=[Depends(require_roles("admin", "hod"))],
 )
 async def edit_faculty(faculty_id: str, data: FacultyUpdate):
-    updated = await update_faculty(faculty_id, data)
+    try:
+        updated = await update_faculty(faculty_id, data)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
 
     if updated == 0:
         raise HTTPException(
@@ -90,3 +97,17 @@ async def remove_faculty(faculty_id: str):
         )
 
     return {"message": "Faculty deleted successfully"}
+
+
+@router.post(
+    "/{faculty_id}/send-email",
+    dependencies=[Depends(require_roles("admin", "hod"))],
+)
+async def send_email(faculty_id: str, creds: EmailCredentials):
+    success = await send_welcome_email(faculty_id, creds.password)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Faculty not found"
+        )
+    return {"message": "Email sent successfully"}

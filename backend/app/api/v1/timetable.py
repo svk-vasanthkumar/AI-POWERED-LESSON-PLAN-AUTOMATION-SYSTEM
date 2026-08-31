@@ -113,9 +113,29 @@ async def edit_timetable(timetable_id: str, data: TimetableUpdate):
 
 @router.delete(
     "/{timetable_id}",
-    dependencies=[Depends(require_roles("admin", "hod"))],
+    dependencies=[Depends(require_roles("admin", "hod", "faculty"))],
 )
-async def remove_timetable(timetable_id: str):
+async def remove_timetable(
+    timetable_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    timetable = await get_timetable(timetable_id)
+    if not timetable:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Timetable not found",
+        )
+
+    if not is_manager(current_user):
+        db = get_database()
+        faculty_oid = await faculty_object_id_for_user(db, current_user)
+        if faculty_oid is None or not ids_match(
+            timetable.get("faculty_id"), faculty_oid
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to access this resource",
+            )
     try:
         deleted = await delete_timetable(timetable_id)
     except TimetableInUseError as e:

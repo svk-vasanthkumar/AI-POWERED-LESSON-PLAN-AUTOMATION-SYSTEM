@@ -21,6 +21,9 @@ from app.api.v1.course import router as course_router
 from app.api.v1.academic_calendar import router as calendar_router
 from app.api.v1.timetable import router as timetable_router
 from app.api.v1.scheduler import router as scheduler_router
+from app.api.v1.reports import router as reports_router
+from app.api.v1.notifications import router as notifications_router
+from app.utils.timetable_periods import configure_period_times
 
 
 
@@ -30,6 +33,15 @@ from app.api.v1.scheduler import router as scheduler_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_period_times({
+        1: {"start_time": "09:00", "end_time": "09:50"},
+        2: {"start_time": "09:50", "end_time": "10:40"},
+        3: {"start_time": "11:00", "end_time": "11:50"},
+        4: {"start_time": "11:50", "end_time": "12:40"},
+        5: {"start_time": "13:30", "end_time": "14:20"},
+        6: {"start_time": "14:20", "end_time": "15:10"},
+        7: {"start_time": "15:10", "end_time": "16:00"},
+    })
     await connect_to_mongo()
     yield
     await close_mongo_connection()
@@ -63,6 +75,8 @@ app.include_router(course_router)
 app.include_router(calendar_router)
 app.include_router(timetable_router)
 app.include_router(scheduler_router)
+app.include_router(reports_router)
+app.include_router(notifications_router)
 
 
 @app.get("/")

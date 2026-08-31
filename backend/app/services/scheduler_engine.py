@@ -292,63 +292,31 @@ def build_available_dates(
     return available
 
 
-# ---------------------------------------------------------------------------
-# Legacy clock timetable
-# ---------------------------------------------------------------------------
+def build_slots_by_weekday(timetable_schedule) -> dict[str, list[tuple[int, int]]]:
+    """Group timetable slots by weekday and validate their times (Phase 5).
 
-
-def build_slots_by_weekday(
-    timetable_schedule,
-) -> dict[str, list[tuple[int, int]]]:
-
-    if not isinstance(
-        timetable_schedule,
-        list,
-    ) or not timetable_schedule:
-        raise SchedulerValidationError(
-            "Invalid timetable: no slots configured"
-        )
+    Returns ``{weekday: [(start_minutes, end_minutes), ...]}`` with slots sorted
+    by start time so allocation is deterministic.
+    """
+    if not isinstance(timetable_schedule, list) or not timetable_schedule:
+        raise SchedulerValidationError("Invalid timetable: no slots configured")
 
     slots: dict[str, list[tuple[int, int]]] = {}
-
     for slot in timetable_schedule:
 
         if not isinstance(slot, dict):
-            raise SchedulerValidationError(
-                "Invalid timetable: malformed slot"
-            )
-
-        weekday = normalize_weekday(
-            slot.get("day")
-        )
-
-        start = parse_time_to_minutes(
-            slot.get("start_time"),
-            "start_time",
-        )
-
-        end = parse_time_to_minutes(
-            slot.get("end_time"),
-            "end_time",
-        )
-
+            raise SchedulerValidationError("Invalid timetable: malformed slot")
+        weekday = normalize_weekday(slot.get("day"))
+        start = parse_time_to_minutes(slot.get("start_time"), "start_time")
+        end = parse_time_to_minutes(slot.get("end_time"), "end_time")
         if end <= start:
             raise SchedulerValidationError(
                 "Invalid timetable: end_time must be after start_time"
             )
-
-        slots.setdefault(
-            weekday,
-            [],
-        ).append(
-            (start, end)
-        )
+        slots.setdefault(weekday, []).append((start, end))
 
     for weekday in slots:
-        slots[weekday].sort(
-            key=lambda pair: pair[0]
-        )
-
+        slots[weekday].sort(key=lambda pair: pair[0])
     return slots
 
 
@@ -360,7 +328,7 @@ def build_slots_by_weekday(
 def allocate_sessions(
     topics: list[dict],
     available_dates: list[date],
-    slots_by_weekday: dict[str, list[tuple[int, int]]],
+    slots_by_weekday: dict[str, list[dict]],
 ) -> tuple[list[dict], list[dict]]:
 
     queue = [
@@ -385,38 +353,17 @@ def allocate_sessions(
 
         if index >= len(queue):
             break
-
-        weekday_name = WEEKDAYS[
-            day.weekday()
-        ]
-
-        for (
-            slot_start,
-            slot_end,
-        ) in slots_by_weekday.get(
-            weekday_name,
-            [],
-        ):
-
+        weekday_name = WEEKDAYS[day.weekday()]
+        for slot_start, slot_end in slots_by_weekday.get(weekday_name, []):
             cursor = slot_start
-
-            while (
-                cursor < slot_end
-                and index < len(queue)
-            ):
-
-                block = min(
-                    slot_end - cursor,
-                    remaining,
-                )
-
+            while cursor < slot_end and index < len(queue):
+                block = min(slot_end - cursor, remaining)
                 block = int(round(block))
 
                 if block <= 0:
                     break
 
                 topic = queue[index]
-
                 sessions.append(
                     {
                         "topic_id": topic["topic_id"],
@@ -426,13 +373,8 @@ def allocate_sessions(
                         "date": day.isoformat(),
                         "day": weekday_name,
                         "start_time": minutes_to_hhmm(cursor),
-                        "end_time": minutes_to_hhmm(
-                            cursor + block
-                        ),
-                        "duration_hours": round(
-                            block / 60,
-                            2,
-                        ),
+                        "end_time": minutes_to_hhmm(cursor + block),
+                        "duration_hours": round(block / 60, 2),
                         "status": "pending",
                     }
                 )

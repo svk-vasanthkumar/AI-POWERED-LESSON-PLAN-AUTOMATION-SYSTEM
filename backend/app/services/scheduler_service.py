@@ -103,7 +103,7 @@ async def _resolve_academic_year(course: dict, timetable: dict, academic_year):
     return None
 
 
-async def _find_calendar(db, course: dict, timetable: dict, academic_year=None) -> dict:
+async def _find_calendar(db, course: dict, timetable: dict, academic_year=None, calendar_id: str | None = None) -> dict:
     """Find the academic calendar for BOTH academic_year and semester (req. 1).
 
     The scheduler must never select a calendar by semester alone when an
@@ -118,6 +118,13 @@ async def _find_calendar(db, course: dict, timetable: dict, academic_year=None) 
         the caller must supply ``academic_year``) rather than guess. A single
         unambiguous calendar is used for backward compatibility.
     """
+    if calendar_id:
+        calendar_oid = to_object_id(calendar_id, field="calendar_id")
+        calendar = await db.academic_calendar.find_one({"_id": calendar_oid})
+        if not calendar:
+            raise ScheduleNotFoundError("Explicitly selected academic calendar not found")
+        return calendar
+
     semester = course.get("semester")
     resolved_year = await _resolve_academic_year(course, timetable, academic_year)
 
@@ -155,7 +162,14 @@ async def _find_calendar(db, course: dict, timetable: dict, academic_year=None) 
     return calendars[0]
 
 
-async def _find_timetable(db, course_oid: ObjectId) -> dict:
+async def _find_timetable(db, course_oid: ObjectId, timetable_id: str | None = None) -> dict:
+    if timetable_id:
+        timetable_oid = to_object_id(timetable_id, field="timetable_id")
+        timetable = await db.timetables.find_one({"_id": timetable_oid})
+        if not timetable:
+            raise ScheduleNotFoundError("Explicitly selected timetable not found")
+        return timetable
+
     timetable = await db.timetables.find_one(
         {"course_id": {"$in": _id_variants(course_oid)}},
         sort=[("created_at", -1)],
@@ -378,7 +392,12 @@ def _carry_forward_execution(
     return carried
 
 
-async def generate_schedule(course_id: str, academic_year: str | None = None) -> dict:
+async def generate_schedule(
+    course_id: str, 
+    academic_year: str | None = None,
+    calendar_id: str | None = None,
+    timetable_id: str | None = None,
+) -> dict:
     """Generate (or regenerate) a conflict-free schedule for a course.
 
     Consumes the new academic calendar (blocked ranges + special/swap days) and
@@ -404,8 +423,8 @@ async def generate_schedule(course_id: str, academic_year: str | None = None) ->
 
     course = await _find_course(db, course_oid)
     lesson = await _find_structured_lesson_plan(db, course_oid)
-    timetable = await _find_timetable(db, course_oid)
-    calendar = await _find_calendar(db, course, timetable, academic_year)
+    timetable = await _find_timetable(db, course_oid, timetable_id)
+    calendar = await _find_calendar(db, course, timetable, academic_year, calendar_id)
 
     # req. 9: the timetable's faculty must match the course's assigned faculty.
     _validate_faculty_relationship(course, timetable)

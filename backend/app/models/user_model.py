@@ -14,6 +14,7 @@ def create_user_document(
         "password": password,
         "role": role,
         "department": department,
+        "has_logged_in": False,
         "created_at": datetime.now(UTC),
         "updated_at": datetime.now(UTC),
     }

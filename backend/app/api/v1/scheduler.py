@@ -77,6 +77,14 @@ async def generate(
             "from the course/timetable when omitted."
         ),
     ),
+    calendar_id: str | None = Query(
+        default=None,
+        description="Optional explicit calendar ID to use for scheduling.",
+    ),
+    timetable_id: str | None = Query(
+        default=None,
+        description="Optional explicit timetable ID to use for scheduling.",
+    ),
 ):
     """Generate (or regenerate) a conflict-free schedule for a course.
 
@@ -89,7 +97,12 @@ async def generate(
         500  handled by the global exception handler (never leaks internals)
     """
     try:
-        return await generate_schedule(course_id, academic_year=academic_year)
+        return await generate_schedule(
+            course_id, 
+            academic_year=academic_year,
+            calendar_id=calendar_id,
+            timetable_id=timetable_id
+        )
 
     except SchedulerValidationError as e:
         # Missing structured plan / invalid calendar dates / invalid timetable.

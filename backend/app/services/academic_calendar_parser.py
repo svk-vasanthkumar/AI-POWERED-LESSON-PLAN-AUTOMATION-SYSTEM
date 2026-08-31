@@ -98,14 +98,40 @@ def _academic_year(text: str) -> str | None:
 
 
 def _semester(text: str) -> int | None:
-    # Roman numerals are common in the commencement row. OCR can occasionally
-    # return VII as VIl, so accept a conservative variant as well.
+    roman_to_int = {
+        'I': 1, 'II': 2, 'III': 3, 'IV': 4, 'V': 5,
+        'VI': 6, 'VII': 7, 'VIII': 8, 'IX': 9, 'X': 10
+    }
+    
+    # 1. Match "III Semester" or "3rd Semester"
+    match = re.search(r"\b(I{1,3}|IV|V|VI{1,3}|IX|X|\d{1,2}(?:st|nd|rd|th)?)\s+SEMESTER\b", text, re.I)
+    if match:
+        val = match.group(1).upper()
+        # Remove suffixes like ST, ND, RD, TH
+        val = re.sub(r"(ST|ND|RD|TH)$", "", val)
+        if val.isdigit():
+            return int(val)
+        return roman_to_int.get(val)
+
+    # 2. Match "Semester III" or "Semester 3"
+    match = re.search(r"\bSEMESTER\s*[:=-]?\s*(I{1,3}|IV|V|VI{1,3}|IX|X|\d{1,2})\b", text, re.I)
+    if match:
+        val = match.group(1).upper()
+        if val.isdigit():
+            return int(val)
+        return roman_to_int.get(val)
+
+    # 3. Fallbacks for OCR errors (e.g. VIL for VII)
     patterns = (
-        (r"\bVII\b", 7),
         (r"\bVIL\b", 7),
-        (r"\b7(?:TH)?\s+SEMESTER\b", 7),
-        (r"\bSEMESTER\s*[:=-]?\s*7\b", 7),
         (r"\bVI[I1]\b\s*(?:,|&|AND)", 7),
+        (r"\bVII\b", 7),
+        (r"\bIII\b", 3),
+        (r"\bII\b", 2),
+        (r"\bIV\b", 4),
+        (r"\bVI\b", 6),
+        (r"\bV\b", 5),
+        (r"\bI\b", 1),
     )
     for pattern, value in patterns:
         if re.search(pattern, text, re.I):

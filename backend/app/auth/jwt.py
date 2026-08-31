@@ -54,3 +54,27 @@ def verify_token(
             status_code=401,
             detail="Invalid or expired token",
         )
+
+
+def create_reset_token(email: str):
+    expire = datetime.now(UTC) + timedelta(minutes=15)
+    payload = {"sub": email, "type": "reset", "exp": expire}
+    return jwt.encode(
+        payload,
+        settings.JWT_SECRET_KEY,
+        algorithm=settings.JWT_ALGORITHM,
+    )
+
+
+def verify_reset_token(token: str):
+    try:
+        payload = jwt.decode(
+            token,
+            settings.JWT_SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM],
+        )
+        if payload.get("type") != "reset":
+            return None
+        return payload.get("sub")
+    except JWTError:
+        return None
