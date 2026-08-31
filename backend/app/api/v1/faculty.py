@@ -60,7 +60,13 @@ async def single_faculty(faculty_id: str):
     dependencies=[Depends(require_roles("admin", "hod"))],
 )
 async def edit_faculty(faculty_id: str, data: FacultyUpdate):
-    updated = await update_faculty(faculty_id, data)
+    try:
+        updated = await update_faculty(faculty_id, data)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
 
     if updated == 0:
         raise HTTPException(
