@@ -8,6 +8,7 @@ class CourseCreate(BaseModel):
     semester: int
     credits: int
     faculty_id: str
+    academic_year: str
 
 
 class CourseUpdate(BaseModel):
@@ -16,3 +17,4 @@ class CourseUpdate(BaseModel):
     semester: int
     credits: int
     faculty_id: str
+    academic_year: str
