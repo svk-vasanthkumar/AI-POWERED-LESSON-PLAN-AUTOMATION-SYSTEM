@@ -151,10 +151,31 @@ async def update_lesson_plan(
     lesson = await _load_authorized_lesson(lesson_id, current_user)
 
     db = get_database()
-    await db.lesson_plans.update_one(
-        {"_id": lesson["_id"]},
-        {"$set": {"lesson_plan": data.lesson_plan}},
-    )
+    update_data = {}
+    if data.lesson_plan is not None:
+        update_data["lesson_plan"] = data.lesson_plan
+    if data.sessions is not None:
+        update_data["sessions"] = data.sessions
+    if data.status is not None:
+        update_data["status"] = data.status
+
+    if update_data:
+        await db.lesson_plans.update_one(
+            {"_id": lesson["_id"]},
+            {"$set": update_data},
+        )
+        
+        # Send notification if approved
+        if data.status == "Approved" and lesson.get("status") != "Approved":
+            course = await db.courses.find_one({"_id": lesson["course_id"]})
+            if course and "faculty_id" in course:
+                from app.services.notification_service import create_notification
+                await create_notification(
+                    user_id=str(course["faculty_id"]),
+                    title="Lesson Plan Approved",
+                    message=f"The lesson plan for {course['course_code']} has been approved.",
+                    type="success"
+                )
 
     return {"message": "Lesson plan updated successfully"}
 
