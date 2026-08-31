@@ -98,6 +98,7 @@ const LessonPlanCreator = () => {
   const handleNext = async () => {
     if (currentStep === 3) {
       // Transition from Config to Generate
+      setCurrentStep(4);
       setLoading(true);
       try {
         // Call backend API to generate lesson plan using Groq + CSP
@@ -146,7 +147,6 @@ const LessonPlanCreator = () => {
           }
         }
         
-        setCurrentStep(4);
       } catch (error) {
         alert("Failed to generate plan: " + (error.uiMessage || error.message));
       } finally {
@@ -395,6 +395,9 @@ const LessonPlanCreator = () => {
               <div className="export-actions">
                 <button className="btn btn-secondary btn-sm" onClick={() => handleExport('pdf')} disabled={loading}>
                   <Download size={14} /> PDF
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={() => handleExport('docx')} disabled={loading}>
+                  <Download size={14} /> Word
                 </button>
                 <button className="btn btn-secondary btn-sm" onClick={() => handleExport('xlsx')} disabled={loading}>
                   <Download size={14} /> Excel
