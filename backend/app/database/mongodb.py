@@ -85,15 +85,57 @@ _UNIQUE_INDEXES = (
     ),
 )
 
+# Non-unique LOOKUP indexes for the hot, non-``_id`` query paths exercised on
+# every request by a shared faculty pool. These must NOT be unique: a course
+# legitimately has many schedules (versioned) and a faculty many courses.
+#
+# Justification (one entry per real query in the codebase):
+#   courses.faculty_id            -> accessible_course_ids(), run on EVERY
+#                                    authorization check (auth/resource_access)
+#   generated_schedules
+#     (lesson_plan_id, active)    -> planned date/period lookup for a lesson
+#                                    plan (the original "dates not shown" path)
+#     (course_id, active, version)-> active-schedule lookup + supersede on
+#                                    regeneration, and progress resolution
+#   lesson_plans.course_id        -> lesson-plan listing / schedule linking
+#   syllabi.course_id             -> syllabus listing per course
+#   timetables.(faculty_id, ...)  -> timetable resolution during scheduling
+#   faculty.user_id               -> resolves the logged-in user to a faculty
+_LOOKUP_INDEXES = (
+    ("courses", [("faculty_id", 1)], "idx_courses_faculty_id"),
+    (
+        "generated_schedules",
+        [("lesson_plan_id", 1), ("active", 1)],
+        "idx_schedules_lesson_plan_active",
+    ),
+    (
+        "generated_schedules",
+        [("course_id", 1), ("active", 1), ("version", -1)],
+        "idx_schedules_course_active_version",
+    ),
+    ("lesson_plans", [("course_id", 1)], "idx_lesson_plans_course_id"),
+    ("syllabi", [("course_id", 1)], "idx_syllabi_course_id"),
+    (
+        "timetables",
+        [("faculty_id", 1), ("semester", 1), ("academic_year", 1)],
+        "idx_timetables_faculty_sem_year",
+    ),
+    ("faculty", [("user_id", 1)], "idx_faculty_user_id"),
+)
+
 
 async def init_indexes(db=None):
-    """Create the unique indexes that enforce database integrity.
+    """Create the integrity (unique) and performance (lookup) indexes.
 
     Indexes created:
       - ``users.email``                       -> unique
       - ``faculty.faculty_id``                -> unique
       - ``academic_calendar``                 -> unique compound
                                                  (academic_year + semester)
+      - plus the non-unique lookup indexes in ``_LOOKUP_INDEXES`` covering the
+        hot non-``_id`` queries (authorization by faculty, active-schedule and
+        lesson-plan resolution, timetable lookup).
+
 
     ``create_index`` is idempotent: MongoDB is a no-op when an identical index
     already exists, so calling this function multiple times is safe. Each index
@@ -131,4 +173,28 @@ async def init_indexes(db=None):
                 "duplicate records exist. Resolve the duplicates before starting."
             ) from exc
 
-    logger.info("Database indexes ensured (%d unique indexes)", len(_UNIQUE_INDEXES))
+    # Lookup indexes are a PERFORMANCE optimization, never an integrity
+    # constraint, so a failure here must not prevent the app from starting.
+    # They are non-unique by design: many schedules per course, many courses
+    # per faculty.
+    created_lookups = 0
+    for collection_name, keys, name in _LOOKUP_INDEXES:
+        try:
+            await db[collection_name].create_index(keys, name=name)
+            created_lookups += 1
+            logger.debug("Ensured lookup index %s on %s", name, collection_name)
+        except OperationFailure as exc:
+            logger.warning(
+                "Could not create lookup index %s on %s (queries still "
+                "correct, just unindexed): %s",
+                name,
+                collection_name,
+                exc,
+            )
+
+    logger.info(
+        "Database indexes ensured (%d unique, %d/%d lookup)",
+        len(_UNIQUE_INDEXES),
+        created_lookups,
+        len(_LOOKUP_INDEXES),
+    )

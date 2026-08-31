@@ -1,3 +1,4 @@
+import asyncio
 import os
 import uuid
 
@@ -152,7 +153,12 @@ async def save_uploaded_file(
         with open(resolved, "wb") as buffer:
             buffer.write(contents)
 
-        extracted_text, extraction_method = extract_text_with_method(resolved)
+        # PDF/DOCX parsing (PyMuPDF/python-docx) and any OCR fallback are
+        # blocking and CPU-heavy. Offload to a worker thread so uploads by one
+        # faculty user never stall the event loop for others (Task #15).
+        extracted_text, extraction_method = await asyncio.to_thread(
+            extract_text_with_method, resolved
+        )
 
         syllabus_id = await save_syllabus(
             course_id=course_oid,

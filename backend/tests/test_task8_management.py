@@ -633,10 +633,15 @@ def test_update_preserves_canonical_structured_plan(client, world, db):
 
 
 def test_generation_stores_structured_plan_as_canonical(db, monkeypatch):
-    """Generation persists the structured plan and derives the flat text from
-    it — the flat ``lesson_plan`` never becomes the source of truth.
+    """Generation is canonical-driven: the deterministic parser owns the
+    structure, the AI only enriches it, and the flat ``lesson_plan`` text is
+    DERIVED from the assembled structured plan (never the source of truth).
     """
-    from app.schemas.lesson_plan_schema import LessonPlanAIOutput
+    from app.schemas.syllabus_schema import (
+        CanonicalSyllabus,
+        CanonicalTopic,
+        CanonicalUnit,
+    )
     from app.services import lesson_plan_service as lps
 
     course_oid = _run(_make_course(db, ObjectId(), "CSGEN1"))
@@ -646,25 +651,52 @@ def test_generation_stores_structured_plan_as_canonical(db, monkeypatch):
         )
     ).inserted_id
 
-    plan = LessonPlanAIOutput.model_validate(_structured_plan("Generated Title"))
+    canonical = CanonicalSyllabus(
+        course_code="CSGEN1",
+        course_title="Generated Title",
+        units=[
+            CanonicalUnit(
+                unit_number=1,
+                unit_title="Fundamentals",
+                topics=[
+                    CanonicalTopic(topic_id="U1-T1", topic="Topic Alpha",
+                                   unit_number=1, order=1, hours=2),
+                    CanonicalTopic(topic_id="U1-T2", topic="Topic Beta",
+                                   unit_number=1, order=2, hours=1),
+                ],
+            )
+        ],
+    )
 
-    async def _fake_generate(text):  # noqa: ANN001 - test stub
+    def _fake_parse(text):  # noqa: ANN001 - test stub
         assert text == "syllabus body"
-        return plan
+        return canonical
 
-    # Patch the AI call only; ``structured_to_topic_text`` stays real so we
-    # verify the flat text is DERIVED from the structured plan.
-    monkeypatch.setattr(lps, "generate_lesson_plan", _fake_generate)
+    async def _fake_enrichment(_canonical):  # noqa: ANN001 - test stub
+        # Simulate a total AI outage: enrichment is skipped, but every canonical
+        # topic must still survive into the persisted plan.
+        raise lps.AIGenerationError("provider down")
+
+    monkeypatch.setattr(lps, "parse_syllabus", _fake_parse)
+    monkeypatch.setattr(lps, "request_enrichment", _fake_enrichment)
 
     result = _run(lps.generate_and_save_lesson_plan(str(syllabus_id)))
 
     expected_flat = "Topic Alpha\nTopic Beta"
     assert result["lesson_plan"] == expected_flat
-    assert result["structured_plan"] == plan.model_dump(mode="json")
+    # Every canonical topic survived, in canonical order.
+    ids = [t["topic_id"] for u in result["structured_plan"]["units"] for t in u["topics"]]
+    assert ids == ["U1-T1", "U1-T2"]
+    assert result["topic_coverage"]["complete"] is True
+    # The AI failure was recorded, not swallowed silently.
+    assert result["enrichment"]["status"] == "failed"
 
     stored = _run(db.lesson_plans.find_one({"_id": ObjectId(result["lesson_plan_id"])}))
-    assert stored["structured_plan"] == plan.model_dump(mode="json")
     assert stored["lesson_plan"] == expected_flat
+    stored_ids = [
+        t["topic_id"] for u in stored["structured_plan"]["units"] for t in u["topics"]
+    ]
+    assert stored_ids == ["U1-T1", "U1-T2"]
     # course_id is inherited from the parent syllabus as an ObjectId.
     assert stored["course_id"] == course_oid
 
