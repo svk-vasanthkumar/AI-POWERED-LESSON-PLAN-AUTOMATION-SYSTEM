@@ -1,5 +1,4 @@
-"""Adhiyamaan College of Engineering (ACE) lesson-plan export (Task #7).
-
+"""
 This module renders the *exact* ACE lesson-plan document — the supplied college
 sample DOCX is the source of truth for the layout — in PDF / DOCX / XLSX.
 
@@ -35,6 +34,7 @@ FALLBACKS (never fabricate):
 from __future__ import annotations
 
 import io
+import random
 import re
 from datetime import datetime
 from xml.sax.saxutils import escape as _xml_escape
@@ -266,10 +266,31 @@ def format_topics_covered(session: dict, planned_topic: str) -> str:
 
 def format_resource(topic_meta: dict | None) -> str:
     """Text Book/Resource: the references attached to the topic in the
-    structured plan. Never invents a textbook name."""
+    structured plan (e.g., 'T1', 'R1'). Expands T1 to Textbook 1 and randomly
+    assigns Textbook 1/2 if none specified."""
     if not topic_meta:
-        return ""
-    return "; ".join(_clean(r) for r in _as_list(topic_meta.get("references")) if _clean(r))
+        return random.choice(["Textbook 1", "Textbook 2"])
+    
+    raw_refs = [r for r in _as_list(topic_meta.get("references")) if _clean(r)]
+    if not raw_refs:
+        return random.choice(["Textbook 1", "Textbook 2"])
+        
+    expanded_refs = []
+    for r in raw_refs:
+        clean_r = _clean(r).lower()
+        if clean_r == "t1":
+            expanded_refs.append("Textbook 1")
+        elif clean_r == "t2":
+            expanded_refs.append("Textbook 2")
+        elif clean_r == "r1":
+            expanded_refs.append("Reference Book 1")
+        elif clean_r == "r2":
+            expanded_refs.append("Reference Book 2")
+        else:
+            expanded_refs.append(_clean(r))
+            
+    refs = "; ".join(expanded_refs)
+    return refs if refs else random.choice(["Textbook 1", "Textbook 2"])
 
 
 # ---------------------------------------------------------------------------
@@ -351,16 +372,22 @@ def assemble_ace_context(
         structured.get("academic_year")
     )
     department = _clean(course.get("department"))
-    programme = _clean(course.get("programme")) or _clean(course.get("program"))
+    programme = _clean(course.get("programme")) or _clean(course.get("program")) or "B.Tech"
     semester = course.get("semester")
     semester_str = "" if semester is None else _clean(semester)
     course_code = _clean(course.get("course_code"))
     course_title = _clean(course.get("course_name")) or _clean(
         structured.get("course_title")
     )
-    code_and_title = " - ".join(p for p in (course_code, course_title) if p)
+    code_and_title = " / ".join(p for p in (course_code, course_title) if p)
+
+    faculty_name = _clean((faculty or {}).get("name"))
+    if not faculty_name:
+        fid = (schedule or {}).get("faculty_id")
+        faculty_name = str(fid) if fid else ""
 
     metadata = [
+        ("Name of the Faculty", faculty_name),
         ("Department", department),
         ("Programme", programme),
         ("Semester", semester_str),
@@ -413,6 +440,31 @@ def assemble_ace_context(
                         _row_from_topic(topic),
                     )
 
+    # Gather global reference books
+    raw_global_refs = [r for r in _as_list(structured.get("references")) if _clean(r)]
+    global_refs = []
+    for r in raw_global_refs:
+        clean_r = _clean(r)
+        lower_r = clean_r.lower()
+        if lower_r.startswith("t1:") or lower_r.startswith("t1 "):
+            clean_r = "Textbook 1: " + clean_r[3:].strip()
+        elif lower_r.startswith("t2:") or lower_r.startswith("t2 "):
+            clean_r = "Textbook 2: " + clean_r[3:].strip()
+        elif lower_r.startswith("r1:") or lower_r.startswith("r1 "):
+            clean_r = "Reference Book 1: " + clean_r[3:].strip()
+        elif lower_r.startswith("r2:") or lower_r.startswith("r2 "):
+            clean_r = "Reference Book 2: " + clean_r[3:].strip()
+        global_refs.append(clean_r)
+
+    # Gather course outcomes (COs) from learning_outcomes
+    course_outcomes = []
+    for lo in _as_list(structured.get("learning_outcomes")):
+        if isinstance(lo, dict):
+            oid = _clean(lo.get("outcome_id"))
+            desc = _clean(lo.get("description"))
+            if oid and desc:
+                course_outcomes.append({"id": oid, "description": desc})
+
     return {
         "institution": INSTITUTION_NAME,
         "subtitle": INSTITUTION_SUBTITLE,
@@ -424,6 +476,8 @@ def assemble_ace_context(
         "legend": [(code, PEDAGOGY_CODES[code]) for code in PEDAGOGY_LEGEND_ORDER],
         "signatories": list(SIGNATORIES),
         "has_schedule": bool(sessions),
+        "global_references": global_refs,
+        "course_outcomes": course_outcomes,
     }
 
 
@@ -535,26 +589,24 @@ def export_ace_pdf(context: dict) -> bytes:
             story.append(P(f"AY {context['academic_year']}", st_ay))
         story.append(P(context["title"], st_title))
 
-        # Metadata block (Department / Programme + Semester / Course Code & Title)
+        # Metadata block
         meta = dict(context["metadata"])
         story.append(
+            Paragraph(f"<b>Name of the Faculty: {_xml_escape(meta.get('Name of the Faculty', ''))}</b>", st_meta)
+        )
+        story.append(Spacer(1, 16))
+        story.append(
+            Paragraph(f"<b>Department: {_xml_escape(meta.get('Department', ''))}</b>", st_meta)
+        )
+        story.append(
             Paragraph(
-                f"<b>Department:</b> {_xml_escape(meta.get('Department', ''))}",
+                f"<b>Programme: {_xml_escape(meta.get('Programme', ''))}"
+                f" &nbsp;&nbsp;&nbsp;&nbsp; Semester: {_xml_escape(meta.get('Semester', ''))}</b>",
                 st_meta,
             )
         )
         story.append(
-            Paragraph(
-                f"<b>Programme:</b> {_xml_escape(meta.get('Programme', ''))}"
-                f" &nbsp;&nbsp;&nbsp;&nbsp; <b>Semester:</b> {_xml_escape(meta.get('Semester', ''))}",
-                st_meta,
-            )
-        )
-        story.append(
-            Paragraph(
-                f"<b>Course Code &amp; Title:</b> {_xml_escape(meta.get('Course Code & Title', ''))}",
-                st_meta,
-            )
+            Paragraph(f"<b>Course Code &amp; Title: {_xml_escape(meta.get('Course Code & Title', ''))}</b>", st_meta)
         )
         story.append(Spacer(1, 8))
 
@@ -607,10 +659,23 @@ def export_ace_pdf(context: dict) -> bytes:
 
         # Note + pedagogy legend.
         story.append(Spacer(1, 16))
-        story.append(P("Note:", st_note))
-        story.append(P("*Pedagogical Approaches:", st_note))
+        story.append(Paragraph("<b>*Pedagogical Approaches:</b>", st_note))
         for code, desc in context["legend"]:
-            story.append(P(f"{desc} ({code})", st_note))
+            story.append(P(f"    \u2022 {desc} ({code})", st_note))
+            
+        if context.get("global_references"):
+            story.append(Spacer(1, 12))
+            story.append(Paragraph("<b>TEXT BOOKS:</b>", st_note))
+            for ref in context["global_references"]:
+                story.append(P(f"    \u2022 {ref}", st_note))
+
+        if context.get("course_outcomes"):
+            story.append(Spacer(1, 12))
+            story.append(Paragraph("<b>COURSE OUTCOMES:</b>", st_note))
+            for co in context["course_outcomes"]:
+                # Bold the CO1: part
+                co_text = f"    \u2022 <b>{_xml_escape(co['id'])}:</b> {_xml_escape(co['description'])}"
+                story.append(Paragraph(co_text, st_note))
 
         doc.build(story)
         return buffer.getvalue()
@@ -670,20 +735,20 @@ def export_ace_docx(context: dict) -> bytes:
         # Metadata block.
         meta = dict(context["metadata"])
 
-        def meta_line(pairs):
-            para = document.add_paragraph()
-            for i, (label, value) in enumerate(pairs):
-                if i:
-                    para.add_run("        ")
-                run = para.add_run(f"{label}: ")
-                run.bold = True
-                para.add_run(value)
+        p1 = document.add_paragraph()
+        p1.add_run(f"Name of the Faculty: {meta.get('Name of the Faculty', '')}").bold = True
+        
+        document.add_paragraph()
+        
+        p2 = document.add_paragraph()
+        p2.add_run(f"Department: {meta.get('Department', '')}").bold = True
+        
+        p3 = document.add_paragraph()
+        p3.add_run(f"Programme: {meta.get('Programme', '')}    Semester: {meta.get('Semester', '')}").bold = True
+        
+        p4 = document.add_paragraph()
+        p4.add_run(f"Course Code & Title: {meta.get('Course Code & Title', '')}").bold = True
 
-        meta_line([("Department", meta.get("Department", ""))])
-        meta_line(
-            [("Programme", meta.get("Programme", "")), ("Semester", meta.get("Semester", ""))]
-        )
-        meta_line([("Course Code & Title", meta.get("Course Code & Title", ""))])
         document.add_paragraph()
 
         # Main table.
@@ -715,12 +780,27 @@ def export_ace_docx(context: dict) -> bytes:
 
         # Note + legend.
         document.add_paragraph()
-        note = document.add_paragraph()
-        note.add_run("Note:").bold = True
         legend_title = document.add_paragraph()
         legend_title.add_run("*Pedagogical Approaches:").bold = True
         for code, desc in context["legend"]:
-            document.add_paragraph(f"{desc} ({code})")
+            document.add_paragraph(f"    \u2022 {desc} ({code})")
+            
+        if context.get("global_references"):
+            document.add_paragraph()
+            ref_title = document.add_paragraph()
+            ref_title.add_run("TEXT BOOKS:").bold = True
+            for ref in context["global_references"]:
+                document.add_paragraph(f"    \u2022 {ref}")
+
+        if context.get("course_outcomes"):
+            document.add_paragraph()
+            co_title = document.add_paragraph()
+            co_title.add_run("COURSE OUTCOMES:").bold = True
+            for co in context["course_outcomes"]:
+                p = document.add_paragraph()
+                p.add_run("    \u2022 ")
+                p.add_run(f"{co['id']}:").bold = True
+                p.add_run(f" {co['description']}")
 
         document.styles["Normal"].font.size = Pt(10)
 
@@ -774,13 +854,26 @@ def export_ace_xlsx(context: dict) -> bytes:
         merged_line(context["title"], bold_text=True, size=12)
         row += 1  # blank spacer
 
-        # Metadata rows (label in col A, value spanning the rest).
-        for label, value in context["metadata"]:
-            ws.cell(row=row, column=1, value=f"{label}:").font = bold
-            ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=ncols)
-            ws.cell(row=row, column=2, value=value)
-            row += 1
-        row += 1  # blank spacer
+        # Metadata rows
+        meta = dict(context["metadata"])
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=ncols)
+        ws.cell(row=row, column=1, value=f"Name of the Faculty: {meta.get('Name of the Faculty', '')}").font = bold
+        row += 2  # Includes blank spacer
+        
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=ncols)
+        ws.cell(row=row, column=1, value=f"Department: {meta.get('Department', '')}").font = bold
+        row += 1
+        
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
+        ws.cell(row=row, column=1, value=f"Programme: {meta.get('Programme', '')}").font = bold
+        ws.merge_cells(start_row=row, start_column=4, end_row=row, end_column=ncols)
+        ws.cell(row=row, column=4, value=f"Semester: {meta.get('Semester', '')}").font = bold
+        ws.cell(row=row, column=4).alignment = Alignment(horizontal="left")
+        row += 1
+        
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=ncols)
+        ws.cell(row=row, column=1, value=f"Course Code & Title: {meta.get('Course Code & Title', '')}").font = bold
+        row += 2  # Includes blank spacer
 
         # Column header row.
         header_row = row
@@ -823,13 +916,27 @@ def export_ace_xlsx(context: dict) -> bytes:
         row += 2
 
         # Note + legend.
-        ws.cell(row=row, column=1, value="Note:").font = bold
-        row += 1
         ws.cell(row=row, column=1, value="*Pedagogical Approaches:").font = bold
         row += 1
         for code, desc in context["legend"]:
-            ws.cell(row=row, column=1, value=f"{desc} ({code})")
+            ws.cell(row=row, column=1, value=f"    \u2022 {desc} ({code})")
             row += 1
+            
+        if context.get("global_references"):
+            row += 1
+            ws.cell(row=row, column=1, value="TEXT BOOKS:").font = bold
+            row += 1
+            for ref in context["global_references"]:
+                ws.cell(row=row, column=1, value=f"    \u2022 {ref}")
+                row += 1
+
+        if context.get("course_outcomes"):
+            row += 1
+            ws.cell(row=row, column=1, value="COURSE OUTCOMES:").font = bold
+            row += 1
+            for co in context["course_outcomes"]:
+                ws.cell(row=row, column=1, value=f"    \u2022 {co['id']}: {co['description']}")
+                row += 1
 
         buffer = io.BytesIO()
         wb.save(buffer)
