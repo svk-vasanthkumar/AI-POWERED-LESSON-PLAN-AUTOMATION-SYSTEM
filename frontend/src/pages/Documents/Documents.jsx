@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../../context/AuthContext';
 import UploadCard from '../../components/common/UploadCard';
 import { syllabusService } from '../../services/syllabusService';
 import { academicCalendarService } from '../../services/academicCalendarService';
@@ -8,6 +9,7 @@ import { FileText, Trash2, ExternalLink, CalendarClock, Table } from 'lucide-rea
 import './Documents.css';
 
 const Documents = () => {
+  const { user } = useAuth();
   const [documents, setDocuments] = useState({ syllabi: [], calendars: [], timetables: [] });
   const [courses, setCourses] = useState([]);
   const [selectedCourse, setSelectedCourse] = useState("");
@@ -225,9 +227,11 @@ const Documents = () => {
                       <button className="btn-icon text-blue" onClick={() => window.open(`/preview/calendar/${doc._id || doc.id}`, '_blank')} title="Preview">
                         <ExternalLink size={18} />
                       </button>
-                      <button className="btn-icon text-error" onClick={() => handleDelete('calendar', doc._id || doc.id, academicCalendarService.delete)} title="Delete">
-                        <Trash2 size={18} />
-                      </button>
+                      {(user?.role === 'admin' || user?.role === 'hod') && (
+                        <button className="btn-icon text-error" onClick={() => handleDelete('calendar', doc._id || doc.id, academicCalendarService.delete)} title="Delete">
+                          <Trash2 size={18} />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
