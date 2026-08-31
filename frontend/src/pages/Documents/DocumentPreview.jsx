@@ -52,7 +52,7 @@ const DocumentPreview = () => {
         
         <div className="parsed-data">
           <h3>Extracted Text</h3>
-          <pre className="text-content">{data.extracted_text || 'No text extracted.'}</pre>
+          <pre className="text-content">{data.text || data.extracted_text || 'No text extracted.'}</pre>
         </div>
       </div>
     );
