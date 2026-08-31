@@ -1,14 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Save, ArrowLeft, Download, CheckCircle, Clock, Calendar, X, Plus, Trash2 } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 import { lessonPlanService } from '../../services/lessonPlanService';
 import { courseService } from '../../services/courseService';
 import { academicCalendarService } from '../../services/academicCalendarService';
 import { timetableService } from '../../services/timetableService';
+import { facultyService } from '../../services/facultyService';
 import { schedulerService } from '../../services/schedulerService';
 import './LessonPlanEditor.css';
 
 const LessonPlanEditor = () => {
+  const { user } = useAuth();
   const { id } = useParams();
   const navigate = useNavigate();
   const [plan, setPlan] = useState(null);
@@ -56,7 +59,10 @@ const LessonPlanEditor = () => {
                   co: (topic.learning_outcomes || []).join(', ') || 'N/A',
                   teaching_method: (topic.teaching_methods || []).join(', ') || '-',
                   assessment: (topic.assessment_methods || []).join(', ') || '-',
-                  hours: topic.estimated_hours || 1
+                  hours: topic.estimated_hours || 1,
+                  topic_id: topic.topic_id,
+                  unit_number: unit.unit_number,
+                  unit_title: unit.unit_title
                 });
               });
             }
@@ -172,14 +178,32 @@ const LessonPlanEditor = () => {
   const openScheduleModal = async () => {
     try {
       setGeneratingSchedule(true);
-      const [calendars, timetables] = await Promise.all([
+      const [calendars, timetables, courses, faculties] = await Promise.all([
         academicCalendarService.getAll().catch(() => []),
-        timetableService.getAll().catch(() => [])
+        timetableService.getAll().catch(() => []),
+        courseService.getAll().catch(() => []),
+        facultyService.getAll().catch(() => [])
       ]);
       setAvailableCalendars(calendars);
-      setAvailableTimetables(timetables);
+      
+      // Enrich timetables with course and faculty names for the dropdown
+      const enrichedTimetables = timetables.map(tt => {
+        const course = courses.find(c => (c.id || c._id) === tt.course_id);
+        const faculty = faculties.find(f => (f.id || f._id) === tt.faculty_id);
+        const courseStr = course ? `${course.course_code || ''} ${course.course_name || ''}`.trim() || 'Unknown Course' : 'Unknown Course';
+        const facultyStr = faculty ? faculty.name : 'Unknown Faculty';
+        const ttName = tt.name || (tt.academic_year ? `Timetable ${tt.academic_year}` : (tt.semester ? `Timetable (Sem ${tt.semester})` : 'Timetable'));
+        
+        return {
+          ...tt,
+          displayName: `${ttName} | ${facultyStr} | ${courseStr}`
+        };
+      });
+      
+      setAvailableTimetables(enrichedTimetables);
+      
       if (calendars.length > 0) setSelectedCalendarId(calendars[0].id || calendars[0]._id);
-      if (timetables.length > 0) setSelectedTimetableId(timetables[0].id || timetables[0]._id);
+      if (enrichedTimetables.length > 0) setSelectedTimetableId(enrichedTimetables[0].id || enrichedTimetables[0]._id);
       setShowScheduleModal(true);
     } catch (error) {
       console.error("Failed to fetch schedule assets:", error);
@@ -191,10 +215,75 @@ const LessonPlanEditor = () => {
   const handleGenerateSchedule = async () => {
     try {
       setGeneratingSchedule(true);
-      await schedulerService.generateSchedule(plan.course_id, selectedCalendarId, selectedTimetableId);
+      const schedule = await schedulerService.generateSchedule(plan.course_id, selectedCalendarId, selectedTimetableId);
+      
+      // Save the generated sessions to the lesson plan so they persist in the editor
+      if (schedule && schedule.sessions && schedule.sessions.length > 0) {
+        // Map backend scheduler sessions to the editor format,
+        // merging with existing user-edited content by topic name.
+        const mergedSessions = schedule.sessions.map((schedSession) => {
+          // Find matching existing session by topic text
+          const existingSession = sessions.find(s => s.topic === schedSession.topic);
+          
+          // Format the date for display (backend returns ISO date string e.g. "2026-07-11")
+          const dateStr = schedSession.date || '';
+          let dayOfWeek = schedSession.day || schedSession.timetable_day || '-';
+          
+          // Determine the period/hour display
+          let periodDisplay = '';
+          if (schedSession.period_start !== undefined && schedSession.period_start !== null) {
+            periodDisplay = `Hour ${schedSession.period_start}`;
+            if (schedSession.period_end && schedSession.period_end !== schedSession.period_start) {
+              periodDisplay += `-${schedSession.period_end}`;
+            }
+          }
+          
+          return {
+            day_of_week: dayOfWeek,
+            date: dateStr,
+            topic: schedSession.topic || '',
+            module: existingSession?.module || `Unit ${schedSession.unit_number || ''}`,
+            co: existingSession?.co || 'N/A',
+            teaching_method: existingSession?.teaching_method || '-',
+            assessment: existingSession?.assessment || '-',
+            hours: schedSession.duration_hours || 1,
+            period: periodDisplay,
+            // Keep scheduler metadata for reference
+            session_id: schedSession.session_id,
+            topic_id: schedSession.topic_id,
+            unit_number: schedSession.unit_number,
+            unit_title: schedSession.unit_title,
+            status: schedSession.status || 'pending',
+          };
+        });
+        
+        // Append any topics that couldn't fit in the timeline (unscheduled)
+        // so they aren't lost from the editor.
+        if (schedule.unscheduled_topics && schedule.unscheduled_topics.length > 0) {
+          schedule.unscheduled_topics.forEach((unsched) => {
+            const existingSession = sessions.find(s => s.topic === unsched.topic);
+            mergedSessions.push({
+              day_of_week: '-',
+              date: '',
+              topic: unsched.topic || '',
+              module: existingSession?.module || `Unit ${unsched.unit_number || ''}`,
+              co: existingSession?.co || 'N/A',
+              teaching_method: existingSession?.teaching_method || '-',
+              assessment: existingSession?.assessment || '-',
+              hours: unsched.remaining_hours || 1,
+              period: '',
+              topic_id: unsched.topic_id,
+              unit_number: unsched.unit_number,
+              status: 'pending',
+            });
+          });
+        }
+        
+        await lessonPlanService.update(id, { ...plan, sessions: mergedSessions });
+      }
+      
       alert("Schedule generated successfully! The dates will now reflect the generated schedule.");
       setShowScheduleModal(false);
-      // Refresh the plan to get the updated dates from the schedule (if applicable) or redirect
       window.location.reload();
     } catch (error) {
       console.error("Failed to generate schedule:", error);
@@ -232,19 +321,26 @@ const LessonPlanEditor = () => {
         </div>
         
         <div className="top-bar-actions">
-          <button className="btn btn-secondary btn-sm" onClick={() => handleExport('pdf')} disabled={saving}>
-            <Download size={16} /> Export
+          <button className="btn btn-secondary btn-sm" onClick={() => handleExport('pdf')} disabled={saving} title="Export as PDF">
+            <Download size={14} /> PDF
           </button>
-          {plan.status !== 'Approved' && (
+          <button className="btn btn-secondary btn-sm" onClick={() => handleExport('docx')} disabled={saving} title="Export as Word">
+            <Download size={14} /> Word
+          </button>
+          <button className="btn btn-secondary btn-sm" onClick={() => handleExport('xlsx')} disabled={saving} title="Export as Excel">
+            <Download size={14} /> Excel
+          </button>
+          
+          {(user?.role === 'hod' || user?.role === 'admin') && plan.status !== 'Approved' && (
             <button className="btn btn-success btn-sm" onClick={handleApprove} disabled={saving}>
               <CheckCircle size={16} /> Approve
             </button>
           )}
-          {plan.status === 'Approved' && (
-            <button className="btn btn-accent btn-sm" onClick={openScheduleModal} disabled={saving || generatingSchedule}>
-              <Calendar size={16} /> Generate Schedule
-            </button>
-          )}
+          
+          <button className="btn btn-accent btn-sm" onClick={openScheduleModal} disabled={saving || generatingSchedule}>
+            <Calendar size={16} /> Generate Schedule
+          </button>
+          
           <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
             <Save size={16} /> {saving ? 'Saving...' : 'Save Changes'}
           </button>
@@ -405,7 +501,7 @@ const LessonPlanEditor = () => {
                   {availableTimetables.length === 0 && <option value="">No Timetables Available</option>}
                   {availableTimetables.map(tt => (
                     <option key={tt._id || tt.id} value={tt._id || tt.id}>
-                      {tt.name || `Timetable ${tt.academic_year}`}
+                      {tt.displayName || tt.name || (tt.academic_year ? `Timetable ${tt.academic_year}` : (tt.semester ? `Timetable (Sem ${tt.semester})` : 'Timetable'))}
                     </option>
                   ))}
                 </select>
