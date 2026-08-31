@@ -57,16 +57,16 @@
 }
 
 .text-content {
-  background-color: #f8fafc;
+  background-color: var(--background-secondary);
   padding: 1.5rem;
   border-radius: 8px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-secondary);
   white-space: pre-wrap;
   word-wrap: break-word;
   font-family: 'Courier New', Courier, monospace;
   font-size: 0.875rem;
   line-height: 1.6;
-  color: #334155;
+  color: var(--text-secondary);
   max-height: 500px;
   overflow-y: auto;
 }
@@ -101,12 +101,18 @@
   font-size: 1.125rem;
 }
 
+.status-message.info {
+  background-color: var(--surface-hover);
+  border: 1px solid var(--border-hover);
+  color: var(--text-secondary);
+}
+
 .badge {
   display: inline-block;
   padding: 0.25rem 0.5rem;
-  background-color: #f1f5f9;
-  border: 1px solid #cbd5e1;
-  color: #475569;
+  background-color: var(--background-secondary);
+  border: 1px solid var(--border-secondary);
+  color: var(--text-secondary);
   border-radius: 4px;
   font-size: 0.75rem;
   font-weight: 500;
