@@ -12,7 +12,9 @@ class FacultyCreate(BaseModel):
 
 
 class FacultyUpdate(BaseModel):
+    faculty_id: Optional[str] = Field(None, min_length=6, max_length=6)
     name: Optional[str] = None
+    email: Optional[EmailStr] = None
     department: Optional[str] = None
     designation: Optional[str] = None
 
