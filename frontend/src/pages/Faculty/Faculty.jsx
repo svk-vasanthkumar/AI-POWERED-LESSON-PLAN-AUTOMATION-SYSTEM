@@ -100,6 +100,7 @@ const Faculty = () => {
         // Only send fields that can be updated according to schema
         const updateData = {
           name: formData.name,
+          email: formData.email,
           department: formData.department,
           designation: formData.designation
         };
@@ -258,6 +259,7 @@ const Faculty = () => {
                       pattern=".{6}"
                       title="Faculty ID must be exactly 6 characters"
                     />
+                    {isEditing && <small className="text-secondary mt-1">Faculty ID cannot be changed.</small>}
                   </div>
                   <div className="form-group mb-4" style={{ flex: 2 }}>
                     <label className="form-label">Full Name</label>
@@ -285,9 +287,7 @@ const Faculty = () => {
                       onChange={handleChange}
                       placeholder="e.g. jane.smith@university.edu"
                       required
-                      disabled={isEditing}
                     />
-                    {isEditing && <small className="text-secondary mt-1">Email and Faculty ID cannot be changed.</small>}
                   </div>
                   {!isEditing && (
                     <div className="form-group mb-4" style={{ flex: 1 }}>
