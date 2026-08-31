@@ -118,7 +118,7 @@ const LessonPlansList = () => {
                       {plan.status || 'Draft'}
                     </span>
                   </td>
-                  <td className="text-secondary">{new Date().toLocaleDateString()}</td>
+                  <td className="text-secondary">{plan.updated_at ? new Date(plan.updated_at).toLocaleDateString() : (plan.created_at ? new Date(plan.created_at).toLocaleDateString() : '-')}</td>
                   <td>
                     <div className="action-buttons">
                       <button 
