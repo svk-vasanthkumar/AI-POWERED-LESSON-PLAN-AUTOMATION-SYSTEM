@@ -28,6 +28,14 @@ const LessonPlanEditor = () => {
   const [selectedCalendarId, setSelectedCalendarId] = useState('');
   const [selectedTimetableId, setSelectedTimetableId] = useState('');
   const [generatingSchedule, setGeneratingSchedule] = useState(false);
+  const [includeExamConfig, setIncludeExamConfig] = useState(false);
+  const [examConfigs, setExamConfigs] = useState([{
+    exam_type: 'CIA',
+    start_date: '',
+    end_date: '',
+    exam_days: ['Monday', 'Saturday'],
+    duration: 2
+  }]);
 
   useEffect(() => {
     const fetchPlan = async () => {
@@ -112,7 +120,8 @@ const LessonPlanEditor = () => {
         co: '',
         teaching_method: '',
         assessment: '',
-        hours: 1
+        hours: 1,
+        session_type: 'class'
       }
     ]);
   };
@@ -202,8 +211,8 @@ const LessonPlanEditor = () => {
       
       setAvailableTimetables(enrichedTimetables);
       
-      if (calendars.length > 0) setSelectedCalendarId(calendars[0].id || calendars[0]._id);
-      if (enrichedTimetables.length > 0) setSelectedTimetableId(enrichedTimetables[0].id || enrichedTimetables[0]._id);
+      if (calendars.length > 0) setSelectedCalendarId(calendars[0]._id || calendars[0].id);
+      if (enrichedTimetables.length > 0) setSelectedTimetableId(enrichedTimetables[0]._id || enrichedTimetables[0].id);
       setShowScheduleModal(true);
     } catch (error) {
       console.error("Failed to fetch schedule assets:", error);
@@ -215,7 +224,9 @@ const LessonPlanEditor = () => {
   const handleGenerateSchedule = async () => {
     try {
       setGeneratingSchedule(true);
-      const schedule = await schedulerService.generateSchedule(plan.course_id, selectedCalendarId, selectedTimetableId);
+      const validConfigs = examConfigs.filter(c => c.start_date && c.end_date);
+      const payload = includeExamConfig && validConfigs.length > 0 ? validConfigs : undefined;
+      const schedule = await schedulerService.generateSchedule(plan.course_id, selectedCalendarId, selectedTimetableId, payload);
       
       // Save the generated sessions to the lesson plan so they persist in the editor
       if (schedule && schedule.sessions && schedule.sessions.length > 0) {
@@ -241,7 +252,9 @@ const LessonPlanEditor = () => {
           return {
             day_of_week: dayOfWeek,
             date: dateStr,
-            topic: schedSession.topic || '',
+            topic: schedSession.session_type === 'exam' ? `${schedSession.exam_type || 'CIA'} Exam` : (schedSession.topic || ''),
+            session_type: schedSession.session_type || 'class',
+            exam_type: schedSession.exam_type || 'CIA',
             module: existingSession?.module || `Unit ${schedSession.unit_number || ''}`,
             co: existingSession?.co || 'N/A',
             teaching_method: existingSession?.teaching_method || '-',
@@ -280,14 +293,22 @@ const LessonPlanEditor = () => {
         }
         
         await lessonPlanService.update(id, { ...plan, sessions: mergedSessions });
+        
+        if (schedule.unscheduled_topics && schedule.unscheduled_topics.length > 0) {
+          alert(`Schedule generated, but ${schedule.unscheduled_topics.length} topics could not fit before the semester ends! They have been added to the bottom of the list without dates.`);
+        } else {
+          alert("Schedule generated successfully! All topics were scheduled.");
+        }
+      } else {
+        alert("Schedule generation did not return any sessions.");
       }
       
-      alert("Schedule generated successfully! The dates will now reflect the generated schedule.");
       setShowScheduleModal(false);
       window.location.reload();
     } catch (error) {
       console.error("Failed to generate schedule:", error);
-      alert(error.uiMessage || "Failed to generate schedule.");
+      const errorDetail = error.response?.data?.detail || error.uiMessage || "Failed to generate schedule.";
+      alert(errorDetail);
     } finally {
       setGeneratingSchedule(false);
     }
@@ -354,13 +375,13 @@ const LessonPlanEditor = () => {
               <tr>
                 <th width="4%">No.</th>
                 <th width="10%">Day</th>
-                <th width="10%">Date</th>
-                <th width="5%">Hrs</th>
+                <th width="11%">Date</th>
+                <th width="6%">Planned Periods</th>
                 <th width="20%">Topic</th>
                 <th width="10%">Module</th>
                 <th width="10%">CO</th>
-                <th width="14%">Methodology</th>
-                <th width="14%">Assessment</th>
+                <th width="13%">Teaching Pedagogy</th>
+                <th width="13%">Assessment</th>
                 <th width="3%"></th>
               </tr>
             </thead>
@@ -393,53 +414,92 @@ const LessonPlanEditor = () => {
                   </td>
                   <td>
                     <input 
-                      type="number" 
-                      className="inline-input text-center"
-                      value={session.hours || 1} 
-                      onChange={(e) => handleSessionChange(idx, 'hours', parseInt(e.target.value, 10))}
-                      min="1"
-                      max="10"
-                    />
-                  </td>
-                  <td>
-                    <textarea 
-                      className="inline-textarea"
-                      value={session.topic || ''}
-                      onChange={(e) => handleSessionChange(idx, 'topic', e.target.value)}
-                      rows={2}
-                    />
-                  </td>
-                  <td>
-                    <input 
                       type="text" 
+                      className="inline-input text-center"
+                      value={session.period || ''} 
+                      onChange={(e) => handleSessionChange(idx, 'period', e.target.value)}
+                    />
+                  </td>
+                  <td>
+                    {session.session_type === 'exam' ? (
+                      <div className="d-flex align-items-center h-100 px-2 text-danger fw-bold">
+                        {session.exam_type || 'CIA'} Exam
+                      </div>
+                    ) : (
+                      <textarea 
+                        className="inline-textarea"
+                        value={session.topic || ''}
+                        onChange={(e) => handleSessionChange(idx, 'topic', e.target.value)}
+                        rows={2}
+                      />
+                    )}
+                  </td>
+                  <td>
+                    <select 
                       className="inline-input"
                       value={session.module || ''} 
                       onChange={(e) => handleSessionChange(idx, 'module', e.target.value)}
-                    />
+                    >
+                      <option value="">-</option>
+                      <option value="Unit 1">Unit 1</option>
+                      <option value="Unit 2">Unit 2</option>
+                      <option value="Unit 3">Unit 3</option>
+                      <option value="Unit 4">Unit 4</option>
+                      <option value="Unit 5">Unit 5</option>
+                    </select>
                   </td>
                   <td>
-                    <input 
-                      type="text" 
+                    <select 
                       className="inline-input"
                       value={session.co || ''} 
                       onChange={(e) => handleSessionChange(idx, 'co', e.target.value)}
-                    />
+                    >
+                      <option value="">-</option>
+                      <option value="CO1">CO1</option>
+                      <option value="CO2">CO2</option>
+                      <option value="CO3">CO3</option>
+                      <option value="CO4">CO4</option>
+                      <option value="CO5">CO5</option>
+                      <option value="CO6">CO6</option>
+                    </select>
                   </td>
                   <td>
-                    <textarea 
-                      className="inline-textarea"
-                      value={session.teaching_method || ''}
-                      onChange={(e) => handleSessionChange(idx, 'teaching_method', e.target.value)}
-                      rows={2}
-                    />
+                    {session.session_type === 'exam' ? (
+                      <span className="text-muted">-</span>
+                    ) : (
+                      <select 
+                        className="inline-input"
+                        value={session.teaching_method || ''}
+                        onChange={(e) => handleSessionChange(idx, 'teaching_method', e.target.value)}
+                      >
+                        <option value="">-</option>
+                        <option value="Chalk & Talk">Chalk & Talk</option>
+                        <option value="NPTEL/OBL">NPTEL/OBL</option>
+                        <option value="Group Learning and Teaching">Group Learning and Teaching</option>
+                        <option value="Individual Learning/Self-study">Individual Learning/Self-study</option>
+                        <option value="Game based learning">Game based learning</option>
+                        <option value="Technology based learning">Technology based learning</option>
+                        <option value="Peer teaching">Peer teaching</option>
+                        <option value="Learning through problem solving">Learning through problem solving</option>
+                        <option value="Project based learning">Project based learning</option>
+                        <option value="Flipped Class room">Flipped Class room</option>
+                      </select>
+                    )}
                   </td>
                   <td>
-                    <textarea 
-                      className="inline-textarea"
+                    <select 
+                      className="inline-input"
                       value={session.assessment || ''}
                       onChange={(e) => handleSessionChange(idx, 'assessment', e.target.value)}
-                      rows={2}
-                    />
+                    >
+                      <option value="">-</option>
+                      <option value="Quiz">Quiz</option>
+                      <option value="Internal Assessment">Internal Assessment</option>
+                      <option value="Assignment">Assignment</option>
+                      <option value="Presentation">Presentation</option>
+                      <option value="Project Review">Project Review</option>
+                      <option value="Viva">Viva</option>
+                    </select>
                   </td>
                   <td className="text-center align-middle">
                     <button 
@@ -480,7 +540,27 @@ const LessonPlanEditor = () => {
                 <select 
                   className="form-control" 
                   value={selectedCalendarId} 
-                  onChange={(e) => setSelectedCalendarId(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedCalendarId(e.target.value);
+                    const cal = availableCalendars.find(c => (c._id || c.id) === e.target.value);
+                    if (cal && includeExamConfig) {
+                      const type = examConfigs[0].exam_type;
+                      let dateRange = null;
+                      if (type === 'CIA 1') dateRange = cal.cia_1;
+                      else if (type === 'CIA 2') dateRange = cal.cia_2;
+                      else if (type === 'CIA 3') dateRange = cal.cia_3;
+                      else if (type === 'Model Theory') dateRange = cal.model_theory;
+                      else if (type === 'Model Practical') dateRange = cal.model_practical;
+                      
+                      if (dateRange && dateRange.start_date && dateRange.end_date) {
+                        setExamConfigs([{
+                          ...examConfigs[0],
+                          start_date: dateRange.start_date.split('T')[0],
+                          end_date: dateRange.end_date.split('T')[0]
+                        }]);
+                      }
+                    }
+                  }}
                 >
                   {availableCalendars.length === 0 && <option value="">No Calendars Available</option>}
                   {availableCalendars.map(cal => (
@@ -505,6 +585,202 @@ const LessonPlanEditor = () => {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div className="form-group mb-4">
+                <div className="d-flex align-items-center mb-3">
+                  <input 
+                    type="checkbox" 
+                    id="includeExamConfig" 
+                    checked={includeExamConfig}
+                    onChange={(e) => setIncludeExamConfig(e.target.checked)}
+                    className="me-2"
+                  />
+                  <label htmlFor="includeExamConfig" className="form-label mb-0 fw-bold">Include Exam / Special Scheduling</label>
+                </div>
+                
+                {includeExamConfig && (() => {
+                  const cal = availableCalendars.find(c => (c._id || c.id) === selectedCalendarId);
+                  
+                  // Helper: parse a dateRange from calendar into YYYY-MM-DD string
+                  const parseDate = (val) => {
+                    if (!val) return null;
+                    const s = typeof val === 'string' ? val : (val.$date || String(val));
+                    return s.split('T')[0];
+                  };
+                  
+                  // Map exam type to calendar field key
+                  const EXAM_TYPE_FIELD_MAP = {
+                    'CIA 1': 'cia_1',
+                    'CIA 2': 'cia_2',
+                    'CIA 3': 'cia_3',
+                    'Model Theory': 'model_theory',
+                    'Model Practical': 'model_practical',
+                    'Semester End Theory': 'semester_end_theory',
+                    'Semester End Practical': 'semester_end_practical',
+                  };
+                  
+                  // Build option labels with available dates from calendar
+                  const formatOptionLabel = (type) => {
+                    const field = EXAM_TYPE_FIELD_MAP[type];
+                    if (!field || !cal) return type;
+                    const range = cal[field];
+                    if (range && range.start_date && range.end_date) {
+                      const s = parseDate(range.start_date);
+                      const e = parseDate(range.end_date);
+                      return `${type}  (${s} → ${e})`;
+                    }
+                    return `${type}  (no dates in calendar)`;
+                  };
+
+                  const handleUpdateConfig = (index, field, value) => {
+                    const newConfigs = [...examConfigs];
+                    newConfigs[index] = { ...newConfigs[index], [field]: value };
+                    
+                    if (field === 'exam_type') {
+                      const calField = EXAM_TYPE_FIELD_MAP[value];
+                      if (cal && calField) {
+                        const range = cal[calField];
+                        if (range && range.start_date && range.end_date) {
+                          newConfigs[index].start_date = parseDate(range.start_date);
+                          newConfigs[index].end_date = parseDate(range.end_date);
+                        } else {
+                          newConfigs[index].start_date = '';
+                          newConfigs[index].end_date = '';
+                        }
+                      }
+                    }
+                    setExamConfigs(newConfigs);
+                  };
+
+                  const handleAddConfig = () => {
+                    setExamConfigs([...examConfigs, {
+                      exam_type: 'CIA 2',
+                      start_date: '',
+                      end_date: '',
+                      exam_days: ['Monday', 'Saturday'],
+                      duration: 2
+                    }]);
+                  };
+
+                  const handleRemoveConfig = (index) => {
+                    const newConfigs = examConfigs.filter((_, i) => i !== index);
+                    setExamConfigs(newConfigs.length > 0 ? newConfigs : [{
+                      exam_type: 'CIA',
+                      start_date: '',
+                      end_date: '',
+                      exam_days: ['Monday', 'Saturday'],
+                      duration: 2
+                    }]);
+                  };
+                  
+                  return (
+                  <div className="p-3 border rounded bg-light">
+                    {examConfigs.map((config, index) => {
+                      const selectedField = EXAM_TYPE_FIELD_MAP[config.exam_type];
+                      const calDateRange = cal && selectedField ? cal[selectedField] : null;
+                      const hasCalendarDates = calDateRange && calDateRange.start_date && calDateRange.end_date;
+                      
+                      return (
+                        <div key={index} className="mb-4 pb-3" style={index < examConfigs.length - 1 ? { borderBottom: '1px solid #dee2e6' } : {}}>
+                          {cal && (
+                            <div className="d-flex justify-content-between align-items-center mb-3">
+                              <div style={{ padding: '0.5rem 0.75rem', borderRadius: '6px', 
+                                background: hasCalendarDates ? '#e6f4ea' : '#fff3cd',
+                                border: `1px solid ${hasCalendarDates ? '#34a853' : '#ffc107'}`,
+                                fontSize: '0.82rem', color: hasCalendarDates ? '#1e7e34' : '#856404'
+                              }}>
+                                {hasCalendarDates 
+                                  ? `✅ Dates auto-filled from ${cal.academic_year} (Sem ${cal.semester}) calendar`
+                                  : `⚠️ No dates found for "${config.exam_type}" in the selected calendar. Enter manually below, or update the Academic Calendar first.`
+                                }
+                              </div>
+                              {examConfigs.length > 1 && (
+                                <button className="btn btn-sm btn-outline-danger" onClick={() => handleRemoveConfig(index)}>
+                                  Remove
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          <div className="row mb-3">
+                            <div className="col-md-6">
+                              <label className="form-label">Exam Type</label>
+                              <select 
+                                className="form-control"
+                                value={config.exam_type}
+                                onChange={(e) => handleUpdateConfig(index, 'exam_type', e.target.value)}
+                              >
+                                <option value="CIA">CIA (General)</option>
+                                {Object.keys(EXAM_TYPE_FIELD_MAP).map(type => (
+                                  <option key={type} value={type}>{formatOptionLabel(type)}</option>
+                                ))}
+                                <option value="Unit Test">Unit Test</option>
+                              </select>
+                            </div>
+                            <div className="col-md-6">
+                              <label className="form-label">Exam Duration (Hours)</label>
+                              <input 
+                                type="number" 
+                                className="form-control"
+                                value={config.duration}
+                                onChange={(e) => handleUpdateConfig(index, 'duration', parseInt(e.target.value, 10))}
+                                min="1" max="7"
+                              />
+                            </div>
+                          </div>
+                          
+                          <div className="row mb-3">
+                            <div className="col-md-6">
+                              <label className="form-label">Start Date</label>
+                              <input 
+                                type="date" 
+                                className="form-control"
+                                value={config.start_date}
+                                onChange={(e) => handleUpdateConfig(index, 'start_date', e.target.value)}
+                              />
+                            </div>
+                            <div className="col-md-6">
+                              <label className="form-label">End Date</label>
+                              <input 
+                                type="date" 
+                                className="form-control"
+                                value={config.end_date}
+                                onChange={(e) => handleUpdateConfig(index, 'end_date', e.target.value)}
+                              />
+                            </div>
+                          </div>
+                          
+                          <div>
+                            <label className="form-label d-block">Exam Days</label>
+                            <div className="d-flex flex-wrap gap-2">
+                              {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map(day => (
+                                <div key={day} className="form-check form-check-inline">
+                                  <input 
+                                    className="form-check-input" 
+                                    type="checkbox" 
+                                    id={`exam-day-${index}-${day}`}
+                                    checked={config.exam_days.includes(day)}
+                                    onChange={(e) => {
+                                      const newDays = e.target.checked 
+                                        ? [...config.exam_days, day]
+                                        : config.exam_days.filter(d => d !== day);
+                                      handleUpdateConfig(index, 'exam_days', newDays);
+                                    }}
+                                  />
+                                  <label className="form-check-label" htmlFor={`exam-day-${index}-${day}`}>{day}</label>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <button className="btn btn-outline-primary btn-sm w-100 mt-2" onClick={handleAddConfig}>
+                      + Add Another Exam
+                    </button>
+                  </div>
+                  );
+                })()}
               </div>
             </div>
             <div className="modal-footer">
