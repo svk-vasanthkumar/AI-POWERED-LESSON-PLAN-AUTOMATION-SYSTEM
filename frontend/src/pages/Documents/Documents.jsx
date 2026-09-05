@@ -103,6 +103,20 @@ const Documents = () => {
     if (window.confirm(`Are you sure you want to delete this ${type}?`)) {
       try {
         await serviceCall(id);
+        
+        // Optimistically update the UI so the item disappears immediately
+        setDocuments(prev => {
+          const updated = { ...prev };
+          if (type === 'syllabus') {
+            updated.syllabi = updated.syllabi.filter(d => (d._id || d.id) !== id);
+          } else if (type === 'calendar') {
+            updated.calendars = updated.calendars.filter(d => (d._id || d.id) !== id);
+          } else if (type === 'timetable') {
+            updated.timetables = updated.timetables.filter(d => (d._id || d.id) !== id);
+          }
+          return updated;
+        });
+
         fetchAllDocuments();
       } catch (error) {
         alert("Failed to delete document: " + (error.uiMessage || error.message));
@@ -130,7 +144,7 @@ const Documents = () => {
                 value={selectedCourse}
                 onChange={(e) => setSelectedCourse(e.target.value)}
               >
-                <option value="">Select a Course for Syllabus...</option>
+                <option value="">Select a Course...</option>
                 {courses.map(course => (
                   <option key={course._id || course.id} value={course._id || course.id}>
                     {course.course_code} - {course.course_name}
@@ -172,7 +186,16 @@ const Documents = () => {
             <UploadCard 
               title="Faculty Timetable (PDF/CSV/Img)"
               acceptedFormats=".pdf,.csv,.png,.jpg"
-              onUpload={(file) => handleUpload('timetable', file, timetableService.upload)}
+              onUpload={(file) => {
+                if (!selectedCourse) {
+                  alert("Please select a course first.");
+                  return;
+                }
+                const course = courses.find(c => (c._id || c.id) === selectedCourse);
+                if (!course) return;
+                
+                handleUpload('timetable', file, (f) => timetableService.upload(f, course.faculty_id, selectedCourse, course.semester));
+              }}
               isUploading={uploadState.timetable.isUploading}
               progress={uploadState.timetable.progress}
               status={uploadState.timetable.status}
@@ -194,8 +217,8 @@ const Documents = () => {
               </div>
             ) : (
               <>
-                {documents.syllabi.map(doc => (
-                  <div key={`syl-${doc.id}`} className="document-card">
+                {documents.syllabi.map((doc, idx) => (
+                  <div key={`syl-${doc._id || doc.id || idx}`} className="document-card">
                     <div className="doc-icon-wrapper bg-blue-light text-blue">
                       <FileText size={20} />
                     </div>
@@ -214,8 +237,8 @@ const Documents = () => {
                   </div>
                 ))}
 
-                {documents.calendars.map(doc => (
-                  <div key={`cal-${doc.id}`} className="document-card">
+                {documents.calendars.map((doc, idx) => (
+                  <div key={`cal-${doc._id || doc.id || idx}`} className="document-card">
                     <div className="doc-icon-wrapper bg-amber-light text-amber">
                       <CalendarClock size={20} />
                     </div>
@@ -236,8 +259,8 @@ const Documents = () => {
                   </div>
                 ))}
 
-                {documents.timetables.map(doc => (
-                  <div key={`tt-${doc.id}`} className="document-card">
+                {documents.timetables.map((doc, idx) => (
+                  <div key={`tt-${doc._id || doc.id || idx}`} className="document-card">
                     <div className="doc-icon-wrapper bg-green-light text-green">
                       <Table size={20} />
                     </div>
