@@ -9,6 +9,7 @@ from app.database.mongodb import get_database
 from app.services.syllabus_service import save_syllabus
 from app.services.text_extraction_service import extract_text_with_method
 from app.utils.object_id import to_object_id
+from app.utils.file_validation import validate_extension, validate_content_type, read_within_limit
 
 # Store uploads under a canonical, absolute directory so we can guarantee
 # every stored file resolves back inside it (path-traversal protection).
@@ -27,74 +28,7 @@ ALLOWED_TYPES: dict[str, str] = {
     ".png": "image/png",
 }
 
-# Read files in bounded chunks so an oversized upload is rejected without
-# ever buffering the whole payload in memory.
-_CHUNK_SIZE = 1024 * 1024  # 1 MB
-
-
-def _validate_extension(filename: str | None) -> str:
-    """Return the validated lowercase extension (incl. dot) or raise 415."""
-    if not filename:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="A file with a valid name is required.",
-        )
-
-    # Only consider the base name so inputs like "../../etc/passwd" or
-    # "..\\evil.pdf" can never influence the stored path.
-    base_name = os.path.basename(filename.replace("\\", "/"))
-    _, ext = os.path.splitext(base_name)
-    ext = ext.lower()
-
-    if ext not in ALLOWED_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Unsupported file type. Only .pdf, .docx, .jpg, .jpeg, and .png are allowed.",
-        )
-
-    return ext
-
-
-def _validate_content_type(ext: str, content_type: str | None) -> None:
-    """Reject uploads whose declared MIME type doesn't match the extension."""
-    expected = ALLOWED_TYPES[ext]
-
-    # content_type may include parameters, e.g. "application/pdf; charset=..".
-    provided = (content_type or "").split(";")[0].strip().lower()
-
-    if provided != expected:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="File content type does not match the file extension.",
-        )
-
-
-async def _read_within_limit(file: UploadFile) -> bytes:
-    """Read the upload, enforcing the configured maximum size (413)."""
-    max_bytes = settings.max_upload_size_bytes
-    data = bytearray()
-
-    while True:
-        chunk = await file.read(_CHUNK_SIZE)
-        if not chunk:
-            break
-        data.extend(chunk)
-        if len(data) > max_bytes:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=(
-                    f"File exceeds the maximum allowed size of "
-                    f"{settings.MAX_UPLOAD_SIZE_MB} MB."
-                ),
-            )
-
-    if len(data) == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Uploaded file is empty.",
-        )
-
-    return bytes(data)
+# File validation moved to app.utils.file_validation
 
 
 def _remove_file_quietly(filepath: str | None) -> None:
@@ -127,11 +61,11 @@ async def save_uploaded_file(
 
     # 2. Validate extension + MIME before reading the body.
     original_filename = file.filename
-    ext = _validate_extension(original_filename)
-    _validate_content_type(ext, file.content_type)
+    ext = validate_extension(original_filename, ALLOWED_TYPES)
+    validate_content_type(ext, file.content_type, ALLOWED_TYPES)
 
     # 3. Read the body enforcing the size limit.
-    contents = await _read_within_limit(file)
+    contents = await read_within_limit(file)
 
     # 4. Generate a safe UUID filename; the original name is metadata only.
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
