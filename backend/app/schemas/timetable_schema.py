@@ -17,7 +17,7 @@ inconsistent timetable data instead of letting bad values reach the scheduler.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 
@@ -50,6 +50,17 @@ class ScheduleItem(BaseModel):
     # timetable's course relationship stays at the document level; this is only
     # a human-readable label (e.g. "DBMS Lab").
     subject: Optional[str] = None
+
+    # New Logical Fields for full scheduling engine integration (Task #3)
+    id: Optional[str] = None
+    day_order: Optional[int] = None
+    course_id: Optional[str] = None
+    faculty_id: Optional[str] = None
+    faculty: Optional[str] = None
+    room: Optional[str] = None
+    lab: Optional[str] = None
+    section: Optional[str] = None
+    period_timing: Optional[str] = None
 
     @field_validator("day")
     @classmethod
@@ -97,7 +108,13 @@ class TimetableCreate(BaseModel):
     faculty_id: str
     course_id: str
     semester: int
-    schedule: list[ScheduleItem]
+    schedule: list[ScheduleItem] = []
+    
+    status: Literal["OCR_PENDING", "DRAFT", "VERIFIED", "REJECTED"] = "VERIFIED"
+    raw_text: Optional[str] = None
+    original_filename: Optional[str] = None
+    stored_filename: Optional[str] = None
+    extraction_method: Optional[str] = None
 
     @model_validator(mode="after")
     def _validate_no_internal_overlap(self):
@@ -134,6 +151,12 @@ class TimetableUpdate(BaseModel):
     course_id: Optional[str] = None
     semester: Optional[int] = None
     schedule: Optional[list[ScheduleItem]] = None
+    
+    status: Optional[Literal["OCR_PENDING", "DRAFT", "VERIFIED", "REJECTED"]] = None
+    raw_text: Optional[str] = None
+    original_filename: Optional[str] = None
+    stored_filename: Optional[str] = None
+    extraction_method: Optional[str] = None
 
     @model_validator(mode="after")
     def _validate_no_internal_overlap(self):
