@@ -245,6 +245,7 @@ def _special_days(text: str) -> list[SpecialTimetableDay]:
     result: list[SpecialTimetableDay] = []
     seen: set[tuple[date, str]] = set()
 
+    # Pattern 1: Explicit timetable day (e.g., "17.08.2026 - Thursday Timetable")
     pattern = rf"({_DATE})\s*[-–—:]\s*({weekday_pattern})\s+Timetable\b"
     for match in re.finditer(pattern, text, re.I):
         try:
@@ -252,6 +253,46 @@ def _special_days(text: str) -> list[SpecialTimetableDay]:
         except ValueError:
             continue
         day = match.group(5).title()
+        key = (special_date, day)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(
+            SpecialTimetableDay(
+                date=special_date,
+                timetable_day=day,
+            )
+        )
+        
+    # Pattern 2: Day Order N (e.g., "17.08.2026 - Day Order 4")
+    day_order_map = {
+        "1": "Monday", "I": "Monday",
+        "2": "Tuesday", "II": "Tuesday",
+        "3": "Wednesday", "III": "Wednesday",
+        "4": "Thursday", "IV": "Thursday",
+        "5": "Friday", "V": "Friday",
+        "6": "Saturday", "VI": "Saturday",
+    }
+    
+    for line in re.split(r"[\n\r]+", text):
+        date_match = re.search(_DATE, line, re.I)
+        if not date_match:
+            continue
+            
+        order_match = re.search(r"Day\s*Order\s*[-–—:]?\s*([1-6IV]+)\b", line, re.I)
+        if not order_match:
+            continue
+            
+        try:
+            special_date = _to_date(*date_match.groups()[1:4])
+        except ValueError:
+            continue
+            
+        order_val = order_match.group(1).upper()
+        day = day_order_map.get(order_val)
+        if not day:
+            continue
+            
         key = (special_date, day)
         if key in seen:
             continue
