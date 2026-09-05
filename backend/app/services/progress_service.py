@@ -385,13 +385,11 @@ def _validate_reschedule_date(calendar: dict, target):
     non-teachable date. Raises ``SchedulerValidationError`` otherwise.
     """
     teachable = scheduler_engine.build_teachable_days(
-        calendar.get("semester_start"),
-        calendar.get("semester_end"),
-        calendar.get("working_days"),
-        blocked_dates=_calendar_blocked_dates(calendar),
-        special_days=_calendar_special_days(calendar),
+        calendar_model=calendar,
+        semester_start=calendar.get("semester_start"),
+        semester_end=calendar.get("semester_end"),
     )
-    teachable_map = {d: wd for d, wd in teachable}
+    teachable_map = {d: wd for d, wd, _ in teachable}
     if target not in teachable_map:
         raise SchedulerValidationError(
             f"Cannot reschedule to {target.isoformat()}: it is a holiday, exam, "
