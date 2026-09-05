@@ -33,7 +33,6 @@ from app.utils.calendar_dates import (
     to_date,
 )
 from app.utils.object_id import to_object_id
-from app.utils.timetable_periods import get_period_time_map
 
 
 class ScheduleNotFoundError(Exception):
@@ -214,17 +213,17 @@ async def _collect_existing_conflict_sessions(
     query = {
         "active": True,
         "faculty_id": {"$in": faculty_variants},
+        "course_id": {"$nin": _id_variants(course_oid)},
     }
 
     existing_sessions: list[dict] = []
     async for schedule in db.generated_schedules.find(query):
-        # Skip this course's own previous schedule; it is superseded, not a clash.
-        if str(schedule.get("course_id")) == str(course_oid):
-            continue
         for session in schedule.get("sessions", []):
             existing_sessions.append(
                 {
                     "date": session.get("date"),
+                    "day": session.get("day"),
+                    "timetable_day": session.get("timetable_day"),
                     # Period-based comparison (new timetables) …
                     "period_start": session.get("period_start"),
                     "period_end": session.get("period_end"),
@@ -485,7 +484,9 @@ async def generate_schedule(
             schedule_slots, target_subject=target_subject
         )
         blocks = scheduler_engine.build_period_blocks(
-            teachable_days, period_slots, period_time_map=get_period_time_map() or None
+            teachable_days,
+            period_slots,
+            period_time_map=period_time_map,
         )
         scheduling_mode = "period"
     else:
@@ -517,6 +518,20 @@ async def generate_schedule(
     # order; topics that do not fit before semester end are reported.
     sessions, unscheduled = scheduler_engine.allocate_blocks(topics, blocks)
 
+    for topic in topics:
+        topic_id = topic["topic_id"]
+        requested = float(topic["estimated_hours"])
+        scheduled = sum(
+            float(session.get("duration_hours", 0))
+            for session in sessions
+            if session.get("topic_id") == topic_id
+        )
+
+        if scheduled - requested > 1e-6:
+            raise SchedulerValidationError(
+                f"Scheduler over-allocated topic '{topic_id}'"
+            )
+
     # The faculty owning this schedule comes from the timetable (its faculty_id
     # reflects who teaches these slots); fall back to the course's faculty_id.
     faculty_id = timetable.get("faculty_id") or course.get("faculty_id")
@@ -538,7 +553,11 @@ async def generate_schedule(
         {"course_id": {"$in": _id_variants(course_oid)}, "active": True},
         sort=[("version", -1)],
     )
-    next_version = (previous.get("version", 1) + 1) if previous else 1
+    next_version = (
+        int(previous.get("version") or 0) + 1
+        if previous
+        else 1
+    )
     if previous:
         # req. 11: preserve completed/skipped/rescheduled execution history by
         # carrying it onto reliably-matched new sessions before superseding the

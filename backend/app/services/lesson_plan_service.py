@@ -1,8 +1,41 @@
+"""Lesson-plan generation & lifecycle service.
+
+Generation pipeline (the canonical-syllabus rework — Task #6)::
+
+    syllabus document text
+        -> parse_syllabus            (deterministic canonical structure)
+        -> request_enrichment        (AI pedagogy ONLY; may fail/degrade)
+        -> merge_enrichment          (canonical + pedagogy -> structured plan)
+        -> validate_topic_coverage   (structured plan == canonical, or refuse)
+        -> persist lesson plan        (structured_plan + provenance)
+
+The syllabus is the single source of truth. The AI model can only *enrich* the
+canonical topics; it can never add, drop, rename or reorder them (see
+``app.services.ai_service``). If the enrichment call fails for any reason the
+plan is still saved — every canonical topic is preserved, only the pedagogy
+fields stay empty — so a transient Groq outage can never make syllabus topics
+disappear.
+
+Coverage is validated against the canonical syllabus before anything is stored;
+an incomplete plan is refused (:class:`LessonPlanCoverageError` -> 422) rather
+than silently saved.
+"""
+
+from __future__ import annotations
+
 from bson import ObjectId
 
+from app.config.logger import logger
 from app.database.mongodb import get_database
 from app.models.lesson_plan_model import create_lesson_plan_document
-from app.services.ai_service import generate_lesson_plan, structured_to_topic_text
+from app.services.ai_service import (
+    AIGenerationError,
+    merge_enrichment,
+    request_enrichment,
+    structured_to_topic_text,
+)
+from app.services.lesson_plan_validation import validate_topic_coverage
+from app.services.syllabus_parser import SyllabusParseError, parse_syllabus
 from app.utils.object_id import to_object_id
 
 
@@ -24,6 +57,24 @@ class LessonPlanInUseError(Exception):
         )
 
 
+class LessonPlanCoverageError(Exception):
+    """Raised when an assembled plan does not fully cover the canonical syllabus.
+
+    The merge is canonical-driven so this should never happen in practice, but
+    it is a hard guard: an incomplete plan is refused (API -> 422) rather than
+    silently persisted. Carries the coverage report so the caller can explain
+    exactly which topics are missing/duplicated/reordered.
+    """
+
+    def __init__(self, coverage: dict):
+        self.coverage = coverage or {}
+        missing = self.coverage.get("missing_topics") or []
+        super().__init__(
+            "The generated lesson plan does not fully cover the syllabus "
+            f"({len(missing)} topic(s) missing). Generation was refused."
+        )
+
+
 def _id_variants(value) -> list:
     """Both ObjectId and string forms of an id (legacy-compatible queries)."""
     variants = [value, str(value)]
@@ -42,7 +93,20 @@ def _id_variants(value) -> list:
     return unique
 
 
-async def generate_and_save_lesson_plan(syllabus_id: str):
+async def generate_and_save_lesson_plan(syllabus_id: str) -> dict:
+    """Generate and persist a lesson plan from a syllabus (Task #6 pipeline).
+
+    Ownership is enforced by the API layer (a faculty may only generate for a
+    course they own); this service performs the deterministic-first pipeline.
+
+    Raises:
+        ValueError: the syllabus does not exist (-> 404).
+        SyllabusParseError: the syllabus text could not be parsed into units +
+            topics (-> 422); generation is refused rather than falling back to
+            an AI-invented structure.
+        LessonPlanCoverageError: the assembled plan does not cover every
+            canonical topic (-> 422).
+    """
     db = get_database()
 
     # Validate & convert the incoming id via the shared helper so a malformed
@@ -50,16 +114,45 @@ async def generate_and_save_lesson_plan(syllabus_id: str):
     syllabus_oid = to_object_id(syllabus_id, field="syllabus_id")
 
     syllabus = await db.syllabi.find_one({"_id": syllabus_oid})
-
     if syllabus is None:
         raise ValueError("Syllabus not found")
 
-    # The AI service now returns a validated, structured LessonPlanAIOutput.
-    structured = await generate_lesson_plan(syllabus["text"])
+    # 1) Deterministic canonical structure — the source of truth. A document
+    #    whose structure cannot be recovered raises SyllabusParseError (-> 422)
+    #    so a fabricated structure can never reach a lesson plan.
+    canonical = parse_syllabus(syllabus.get("text") or "")
 
-    # Flatten the structured plan into an ordered, newline-delimited topic
-    # string so existing consumers (e.g. the scheduler, which splits
-    # ``lesson_plan`` on newlines) keep working unchanged.
+    # 2) AI enrichment (pedagogy only). Any failure degrades gracefully: the
+    #    canonical topics are still persisted with empty pedagogy, and the
+    #    failure is recorded on the plan for auditing. Topics are never lost.
+    enrichment = None
+    enrichment_status: dict = {"status": "ok", "reason": None}
+    try:
+        enrichment = await request_enrichment(canonical)
+    except AIGenerationError as exc:
+        logger.warning(
+            "AI enrichment failed (%s); persisting canonical-only plan for "
+            "syllabus %s",
+            type(exc).__name__,
+            syllabus_oid,
+        )
+        enrichment_status = {"status": "failed", "reason": str(exc)}
+
+    # 3) Merge: canonical (authoritative) + optional pedagogy -> structured plan.
+    structured = merge_enrichment(
+        canonical, enrichment, course_title=canonical.course_title
+    )
+
+    structured_dict = structured.model_dump(mode="json")
+    canonical_dict = canonical.model_dump(mode="json")
+
+    # 4) Coverage: the structured plan MUST contain exactly the canonical
+    #    topics, in canonical order. Refuse to save an incomplete plan.
+    coverage = validate_topic_coverage(canonical, structured_dict)
+    if not coverage["complete"]:
+        raise LessonPlanCoverageError(coverage)
+
+    # Flatten to the backward-compatible newline-delimited topic string.
     lesson_plan_text = structured_to_topic_text(structured)
 
     # JSON-safe dict for MongoDB storage and API responses.
@@ -68,18 +161,16 @@ async def generate_and_save_lesson_plan(syllabus_id: str):
     # Inherit the course relationship from the parent syllabus. Normalize
     # through the helper so it is stored as an ObjectId even if the parent
     # syllabus stored course_id as a legacy string.
-    raw_course_id = syllabus.get("course_id")
-    if not raw_course_id:
-        # Fallback for old documents that lack course_id
-        raw_course_id = str(ObjectId())
-        
-    course_id = to_object_id(raw_course_id, field="course_id")
+    course_id = to_object_id(syllabus["course_id"], field="course_id")
 
     document = create_lesson_plan_document(
         course_id=course_id,
         syllabus_id=syllabus["_id"],
         lesson_plan=lesson_plan_text,
         structured_plan=structured_dict,
+        canonical_syllabus=canonical_dict,
+        topic_coverage=coverage,
+        enrichment=enrichment_status,
     )
 
     result = await db.lesson_plans.insert_one(document)
@@ -90,6 +181,10 @@ async def generate_and_save_lesson_plan(syllabus_id: str):
         "syllabus_id": str(syllabus["_id"]),
         "lesson_plan": lesson_plan_text,
         "structured_plan": structured_dict,
+        "canonical_syllabus": canonical_dict,
+        "topic_coverage": coverage,
+        "enrichment": enrichment_status,
+        "required_hours": canonical.required_hours,
     }
 
 

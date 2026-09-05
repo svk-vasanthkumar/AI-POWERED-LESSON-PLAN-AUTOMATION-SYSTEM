@@ -6,10 +6,60 @@ from bson.errors import InvalidId
 from pymongo.errors import DuplicateKeyError
 
 from app.database.mongodb import get_database
-from app.models.academic_calendar_model import create_calendar_document
-from app.schemas.academic_calendar_schema import AcademicCalendarCreate
+from app.models.academic_calendar_model import _event_to_dict, _range_to_dict, create_calendar_document
+from app.schemas.academic_calendar_schema import AcademicCalendarCreate, AcademicCalendarUpdate
 from app.services.academic_calendar_parser import parse_academic_calendar_text
 from app.services.text_extraction_service import extract_text_with_method
+from app.utils.calendar_dates import to_datetime
+
+
+# The identity of an academic calendar is (academic_year, semester). This is
+# enforced at the database level by the unique index ``uniq_calendar_year_semester``
+# (see app/database/mongodb.py). These fields must stay in sync with that index.
+_CALENDAR_IDENTITY_FIELDS = frozenset({"academic_year", "semester"})
+_CALENDAR_IDENTITY_INDEX = "uniq_calendar_year_semester"
+
+
+class CalendarAlreadyExistsError(Exception):
+    """Raised when a calendar for the same academic_year + semester exists.
+
+    This is a *domain* error, not a database error: it carries a clean,
+    user-facing message and never exposes MongoDB collection names, index
+    names, raw pymongo errors, or stack traces. The API layer maps it to a
+    controlled ``409 Conflict`` response.
+    """
+
+    def __init__(self, academic_year: str, semester: int):
+        self.academic_year = academic_year
+        self.semester = semester
+        super().__init__(
+            f"Academic calendar for {academic_year} "
+            f"Semester {semester} already exists."
+        )
+
+
+def _is_calendar_identity_conflict(exc: DuplicateKeyError) -> bool:
+    """Return True only when ``exc`` is the academic_year/semester uniqueness
+    conflict, and not some other duplicate-key violation.
+
+    We deliberately do NOT treat every ``DuplicateKeyError`` as this conflict.
+    A duplicate on any other index must keep propagating so it is never
+    silently mislabelled as a calendar-identity conflict.
+    """
+    details = getattr(exc, "details", None) or {}
+
+    # Preferred, most precise signal: the violated index' key pattern is exactly
+    # (academic_year, semester).
+    key_pattern = details.get("keyPattern")
+    if isinstance(key_pattern, dict) and frozenset(key_pattern) == _CALENDAR_IDENTITY_FIELDS:
+        return True
+
+    # Fall back to the stable, explicit index name when available.
+    message = str(exc)
+    if _CALENDAR_IDENTITY_INDEX in message or _CALENDAR_IDENTITY_INDEX in str(details):
+        return True
+
+    return False
 
 
 async def create_calendar(
@@ -37,7 +87,6 @@ async def create_calendar(
         raise ValueError("Calendar already exists")
 
     return str(result.inserted_id)
-
 
 
 async def process_calendar_document(
@@ -82,13 +131,50 @@ async def create_pending_calendar(
     """Store an extracted calendar as pending_review.
 
     It is not the active/confirmed calendar yet.
+
+    A calendar is uniquely identified by (academic_year, semester). Uploading
+    the same calendar twice must NOT crash with a raw database error. This is
+    guarded on two levels:
+
+      A. A fast pre-insert check that fails cleanly when a calendar for the same
+         academic_year + semester already exists.
+      B. A race-safe catch of the unique-index ``DuplicateKeyError`` for the
+         case where two concurrent uploads both pass the check above and race to
+         insert. The unique database constraint remains the FINAL protection;
+         this only translates its error into a controlled domain error.
+
+    Both raise :class:`CalendarAlreadyExistsError`, which the API maps to a
+    409 response. No duplicate document is ever created.
     """
     db = get_database()
+
+    # A. Existing calendar found before insert -> fail fast, cleanly.
+    existing = await db.academic_calendar.find_one(
+        {
+            "academic_year": data.academic_year,
+            "semester": data.semester,
+        }
+    )
+    if existing is not None:
+        raise CalendarAlreadyExistsError(data.academic_year, data.semester)
 
     document = create_calendar_document(data)
     document["status"] = "pending_review"
 
-    result = await db.academic_calendar.insert_one(document)
+    # B. Concurrent-insert race: the pre-check can pass for two requests at once.
+    #    The unique index is the last line of defence; map ONLY the
+    #    academic_year/semester conflict to the domain error and let any other
+    #    duplicate-key error propagate untouched.
+    try:
+        result = await db.academic_calendar.insert_one(document)
+    except DuplicateKeyError as exc:
+        if _is_calendar_identity_conflict(exc):
+            raise CalendarAlreadyExistsError(
+                data.academic_year,
+                data.semester,
+            ) from exc
+        raise
+
     return str(result.inserted_id)
 
 
@@ -142,7 +228,6 @@ async def get_calendar(
 
 async def confirm_calendar(
     calendar_id: str,
-    data: AcademicCalendarCreate,
 ) -> bool:
     db = get_database()
 
@@ -151,38 +236,52 @@ async def confirm_calendar(
     except InvalidId:
         return False
 
-    existing = await db.academic_calendar.find_one({"_id": object_id})
+    # Only an existing pending calendar can be confirmed.
+    existing = await db.academic_calendar.find_one(
+        {
+            "_id": object_id,
+            "status": "pending_review",
+        }
+    )
+
     if existing is None:
         return False
 
-    # Only one confirmed calendar may exist for a given academic year +
-    # semester. Older confirmed versions are archived rather than deleted.
+    academic_year = existing.get("academic_year")
+    semester = existing.get("semester")
+
+    # Archive any previously confirmed calendar for the same
+    # academic year + semester.
     await db.academic_calendar.update_many(
         {
-            "academic_year": data.academic_year,
-            "semester": data.semester,
+            "academic_year": academic_year,
+            "semester": semester,
             "status": "confirmed",
             "_id": {"$ne": object_id},
         },
-        {"$set": {"status": "archived", "updated_at": datetime.now(UTC)}},
+        {
+            "$set": {
+                "status": "archived",
+                "updated_at": datetime.now(UTC),
+            }
+        },
     )
 
-    document = create_calendar_document(data)
-    document["status"] = "confirmed"
-    document["updated_at"] = datetime.now(UTC)
-    document.pop("created_at", None)
-
+    # Confirm the SAME stored document.
     result = await db.academic_calendar.update_one(
-        {"_id": object_id},
-        {"$set": document},
+        {
+            "_id": object_id,
+            "status": "pending_review",
+        },
+        {
+            "$set": {
+                "status": "confirmed",
+                "updated_at": datetime.now(UTC),
+            }
+        },
     )
 
     return result.matched_count > 0
-
-
-from app.models.academic_calendar_model import _event_to_dict, _range_to_dict, create_calendar_document
-from app.schemas.academic_calendar_schema import AcademicCalendarCreate, AcademicCalendarUpdate
-from app.utils.calendar_dates import to_datetime
 
 
 async def update_calendar(
