@@ -109,7 +109,7 @@ const LessonPlansList = () => {
               </tr>
             ) : (
               filteredPlans.map(plan => (
-                <tr key={plan._id}>
+                <tr key={plan._id || plan.id}>
                   <td className="font-medium">{plan.course_name || 'N/A'}</td>
                   <td>{plan.course_code || 'N/A'}</td>
                   <td>Sem {plan.semester || '-'}</td>
@@ -124,14 +124,14 @@ const LessonPlansList = () => {
                       <button 
                         className="btn-icon text-accent" 
                         title="Edit Plan"
-                        onClick={() => navigate(`/lesson-plans/${plan._id}`)}
+                        onClick={() => navigate(`/lesson-plans/${plan._id || plan.id}`)}
                       >
                         <Edit2 size={16} />
                       </button>
                       <button 
                         className="btn-icon text-error" 
                         title="Delete Plan"
-                        onClick={() => handleDelete(plan._id || plan.lesson_plan_id)}
+                        onClick={() => handleDelete(plan._id || plan.id)}
                       >
                         <Trash2 size={16} />
                       </button>
