@@ -135,6 +135,15 @@ async def _find_calendar(db, course: dict, timetable: dict, academic_year=None, 
             sort=[("created_at", -1)],
         )
         if calendar is None:
+            # Semester value in DB may differ from course (e.g. calendar has
+            # sequential ID 16, course stores odd-semester number 7). Fall back
+            # to matching by academic_year alone — pick the newest calendar for
+            # the same year so scheduling still works.
+            calendar = await db.academic_calendar.find_one(
+                {"academic_year": resolved_year},
+                sort=[("created_at", -1)],
+            )
+        if calendar is None:
             raise ScheduleNotFoundError(
                 f"Academic calendar not found for academic year "
                 f"'{resolved_year}', semester {semester}"
@@ -250,34 +259,43 @@ def _calendar_blocked_dates(calendar: dict) -> set:
 
     Unions, into a single ``set[date]``:
       * holidays (new ``{date, name}`` dicts OR legacy plain date strings),
-      * the flattened legacy ``internal_exams`` list,
-      * every date inside the structured exam ranges (CIA I/II/III, model
-        practical/theory, semester-end practical/theory), winter vacation and
-        any other ``blocked_periods`` — expanded via the calendar utilities.
+      * for legacy calendars without structured events: internal_exams flat list
+        and normalized blocked periods (cia_1/cia_2/cia_3 ranges).
+      * for new calendars (with structured events): only teaching-stopping event
+        types — CIA dates are NOT blocked here; only Periods 1 & 2 on
+        Monday/Saturday within CIA ranges are reserved via apply_exam_overrides.
 
     No dates are hard-coded; everything comes from the stored calendar.
     """
     blocked: set = set()
+    has_events = bool(calendar.get("events"))
 
     try:
         for holiday in calendar.get("holidays") or []:
             raw = holiday.get("date") if isinstance(holiday, dict) else holiday
             blocked.add(to_date(raw))
 
-        for raw in calendar.get("internal_exams") or []:
-            blocked.add(to_date(raw))
+        # Legacy flat internal_exams list — only use it when the calendar has no
+        # structured events; otherwise it over-blocks CIA teaching weeks.
+        if not has_events:
+            for raw in calendar.get("internal_exams") or []:
+                blocked.add(to_date(raw))
 
-        for period in normalize_blocked_periods(calendar):
-            for day in expand_range_dates(period["start_date"], period["end_date"]):
-                blocked.add(day)
+        # Legacy per-type exam range fields (cia_1, cia_2 …) — skip when the
+        # calendar uses the new events format to avoid double-blocking CIA weeks.
+        if not has_events:
+            for period in normalize_blocked_periods(calendar):
+                for day in expand_range_dates(period["start_date"], period["end_date"]):
+                    blocked.add(day)
 
         # New calendar ingestion stores events uniformly instead of maintaining
         # one field per exam type. Block only events that actually prevent
         # teaching; registration/report/notification milestones do not block a
         # timetable day.
+        # CIA exam ranges are NOT fully blocked — teaching continues during
+        # CIA weeks; only Periods 1 & 2 on Monday/Saturday are reserved for
+        # exams (handled via apply_exam_overrides, not by removing the day).
         blocking_types = {
-            "cia",
-            "cia_report",
             "model_practical",
             "model_theory",
             "remedial",
@@ -286,6 +304,8 @@ def _calendar_blocked_dates(calendar: dict) -> set:
             "hall_ticket",
             "ia_report",
             "winter_vacation",
+            "end_semester_timetable",
+            "last_working_day",
         }
         for event in calendar.get("events") or []:
             if not isinstance(event, dict) or event.get("type") not in blocking_types:
@@ -398,6 +418,7 @@ async def generate_schedule(
     academic_year: str | None = None,
     calendar_id: str | None = None,
     timetable_id: str | None = None,
+    exam_configs: list[dict] | None = None,
 ) -> dict:
     """Generate (or regenerate) a conflict-free schedule for a course.
 
@@ -445,19 +466,52 @@ async def generate_schedule(
 
     schedule_slots = timetable.get("schedule")
 
+    target_subject = ",".join(
+        filter(
+            None,
+            [
+                course.get("course_name"),
+                course.get("short_form"),
+                course.get("course_code"),
+            ],
+        )
+    )
+
     # req. 4-6 + 12: pick the period engine for period-based timetables, and the
     # legacy clock-time engine for old clock-time timetables. Period times are
     # attached only when configured (never invented).
     if scheduler_engine.timetable_is_period_based(schedule_slots):
-        period_slots = scheduler_engine.build_period_slots_by_weekday(schedule_slots)
+        period_slots = scheduler_engine.build_period_slots_by_weekday(
+            schedule_slots, target_subject=target_subject
+        )
         blocks = scheduler_engine.build_period_blocks(
             teachable_days, period_slots, period_time_map=get_period_time_map() or None
         )
         scheduling_mode = "period"
     else:
-        clock_slots = scheduler_engine.build_slots_by_weekday(schedule_slots)
+        clock_slots = scheduler_engine.build_slots_by_weekday(
+            schedule_slots, target_subject=target_subject
+        )
         blocks = scheduler_engine.build_clock_blocks(teachable_days, clock_slots)
         scheduling_mode = "clock"
+
+    # Auto-derive CIA exam configs from calendar events when the caller didn't
+    # explicitly pass them. This ensures Periods 1 & 2 on Monday/Saturday are
+    # always reserved for exams during CIA date ranges.
+    if not exam_configs:
+        exam_configs = [
+            {
+                "start_date": event["start_date"],
+                "end_date": event["end_date"],
+            }
+            for event in (calendar.get("events") or [])
+            if isinstance(event, dict)
+            and event.get("type") == "cia"
+            and event.get("start_date")
+            and event.get("end_date")
+        ]
+    if exam_configs:
+        blocks = scheduler_engine.apply_exam_overrides(blocks, exam_configs)
 
     # req. 10: allocate topic hours across blocks in deterministic unit/topic
     # order; topics that do not fit before semester end are reported.
