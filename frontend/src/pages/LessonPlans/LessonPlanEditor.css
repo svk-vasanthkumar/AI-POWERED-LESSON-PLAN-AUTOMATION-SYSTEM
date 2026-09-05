@@ -123,7 +123,12 @@
 }
 .inline-input[type="number"] {
   -moz-appearance: textfield;
+  appearance: textfield;
   min-width: 40px; /* Ensure it never collapses too small */
+}
+
+.inline-input[type="text"] {
+  min-width: 80px; /* Accommodate text like 'Hour 1-2' */
 }
 
 select.inline-input {

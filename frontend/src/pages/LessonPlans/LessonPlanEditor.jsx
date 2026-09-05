@@ -416,8 +416,9 @@ const LessonPlanEditor = () => {
                     <input 
                       type="text" 
                       className="inline-input text-center"
-                      value={session.period || ''} 
+                      value={session.period || session.hours || ''} 
                       onChange={(e) => handleSessionChange(idx, 'period', e.target.value)}
+                      placeholder="e.g. Hour 1"
                     />
                   </td>
                   <td>
