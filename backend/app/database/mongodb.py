@@ -78,6 +78,7 @@ def get_database():
 _UNIQUE_INDEXES = (
     ("users", "email", "uniq_users_email"),
     ("faculty", "faculty_id", "uniq_faculty_faculty_id"),
+    ("courses", "course_code", "uniq_courses_course_code"),
     (
         "academic_calendar",
         [("academic_year", 1), ("semester", 1)],
