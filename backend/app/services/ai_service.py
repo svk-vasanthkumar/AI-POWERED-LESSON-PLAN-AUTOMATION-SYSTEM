@@ -87,6 +87,7 @@ Strict rules:
 - Each topic MUST have `estimated_hours` set to exactly 1. Do NOT set `estimated_hours` higher than 1.
 - Do NOT group an entire unit into a single topic. Break the unit's content down across exactly 9 distinct hours. If a concept spans multiple hours, list it as "Part 1", "Part 2", etc.
 - Assign useful Bloom's taxonomy levels (Remember, Understand, Apply, Analyze, Evaluate, Create).
+- Choose suitable teaching pedagogies (methods) strictly from this EXACT list: "Chalk & Talk", "NPTEL/OBL", "Group Learning and Teaching", "Individual Learning/Self-study", "Game based learning", "Technology based learning", "Peer teaching", "Learning through problem solving", "Project based learning", "Flipped Class room". Do NOT use abbreviations; use the full statement exactly as written.
 - Choose suitable assessment methods (e.g. Quiz, Assignment, Internal Assessment, Project).
 - REFERENCES: In the root `references` array, list the textbooks and reference books from the syllabus using codes like "T1: Full Book Name by Author, Publisher, Year", "R1: Full Reference Name". Use T for textbooks, R for references. Base these on the syllabus reference material when available; otherwise use realistic academic references for the subject.
 
