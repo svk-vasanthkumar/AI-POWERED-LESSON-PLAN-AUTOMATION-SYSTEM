@@ -163,24 +163,31 @@ def _clean(value) -> str:
 
 
 def map_pedagogy_method(method) -> str | None:
-    """Map ONE free-text teaching method to a college code, or ``None``.
+    """Map ONE free-text teaching method to a college code description, or ``None``.
 
-    Deterministic: an already-valid code (``"CT"`` / ``"CT - Chalk & Talk"``) is
-    returned as-is, otherwise the ordered keyword table decides. ``None`` means
-    "could not be confidently mapped" — the caller then preserves the original
-    text rather than inventing a code.
+    Deterministic: if a code (e.g. "CT") or keyword is found, return the full
+    pedagogy string (e.g. "Chalk & Talk"). ``None`` means "could not be confidently mapped"
+    — the caller then preserves the original text rather than inventing a code.
     """
     text = _clean(method)
     if not text:
         return None
+    
+    # Check if the text exactly matches one of the descriptions (case-insensitive)
+    for code, desc in PEDAGOGY_CODES.items():
+        if text.lower() == desc.lower():
+            return desc
+            
     # Leading token in upper case — catches "CT", "PBL", "CT - Chalk & Talk".
     token = re.split(r"[\s\-/(),]+", text.upper(), maxsplit=1)[0]
     if token in PEDAGOGY_CODES:
-        return token
+        return PEDAGOGY_CODES[token]
+        
     lowered = text.lower()
     for keyword, code in _PEDAGOGY_KEYWORDS:
         if keyword in lowered:
-            return code
+            return PEDAGOGY_CODES[code]
+            
     return None
 
 
@@ -657,12 +664,7 @@ def export_ace_pdf(context: dict) -> bytes:
         )
         story.append(sign_table)
 
-        # Note + pedagogy legend.
-        story.append(Spacer(1, 16))
-        story.append(Paragraph("<b>*Pedagogical Approaches:</b>", st_note))
-        for code, desc in context["legend"]:
-            story.append(P(f"    \u2022 {desc} ({code})", st_note))
-            
+        # Global references
         if context.get("global_references"):
             story.append(Spacer(1, 12))
             story.append(Paragraph("<b>TEXT BOOKS:</b>", st_note))
@@ -778,13 +780,7 @@ def export_ace_docx(context: dict) -> bytes:
         joined = "                    ".join(context["signatories"])
         sign.add_run(joined)
 
-        # Note + legend.
-        document.add_paragraph()
-        legend_title = document.add_paragraph()
-        legend_title.add_run("*Pedagogical Approaches:").bold = True
-        for code, desc in context["legend"]:
-            document.add_paragraph(f"    \u2022 {desc} ({code})")
-            
+        # Global references
         if context.get("global_references"):
             document.add_paragraph()
             ref_title = document.add_paragraph()
@@ -915,13 +911,7 @@ def export_ace_xlsx(context: dict) -> bytes:
             ws.cell(row=row, column=col, value=name).font = bold
         row += 2
 
-        # Note + legend.
-        ws.cell(row=row, column=1, value="*Pedagogical Approaches:").font = bold
-        row += 1
-        for code, desc in context["legend"]:
-            ws.cell(row=row, column=1, value=f"    \u2022 {desc} ({code})")
-            row += 1
-            
+        # Global references
         if context.get("global_references"):
             row += 1
             ws.cell(row=row, column=1, value="TEXT BOOKS:").font = bold
