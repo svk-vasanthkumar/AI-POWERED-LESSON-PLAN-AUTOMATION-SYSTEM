@@ -532,11 +532,6 @@ def test_update_timetable_does_not_self_conflict(db):
             _payload(fac, crs, [{"day": "Monday", "period_start": 1, "period_end": 2}])
         )
     )
-    # The update must be ACCEPTED (no ScheduleConflictError raised against the
-    # document itself). ``modified_count`` is an implementation detail — when the
-    # re-saved values and the ``updated_at`` timestamp are byte-identical Mongo
-    # legitimately reports 0 modified — so the real contract is asserted via the
-    # persisted state below rather than the exact modified count.
     modified = _run(
         update_timetable(
             timetable_id,
@@ -545,12 +540,7 @@ def test_update_timetable_does_not_self_conflict(db):
             ),
         )
     )
-    assert modified in (0, 1)
-
-    persisted = _run(get_timetable(timetable_id))
-    assert persisted["schedule"][0]["day"] == "Monday"
-    assert persisted["schedule"][0]["period_start"] == 1
-    assert persisted["schedule"][0]["period_end"] == 2
+    assert modified == 1
 
 
 # --- 17. DELETE timetable ----------------------------------------------------

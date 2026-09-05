@@ -1,38 +1,3 @@
-"""AI enrichment for lesson plans.
-
-Scope (deliberately narrow)
----------------------------
-The AI model does **not** define the academic structure of a course. Units, unit
-titles, topics, topic order, teaching hours, course outcomes and textbook
-references all come from :mod:`app.services.syllabus_parser`, which reads them
-deterministically from the syllabus document.
-
-This module only asks the model for *pedagogical* metadata — Bloom levels,
-teaching methods, assessment methods and outcome mapping — keyed by the
-canonical ``topic_id`` values it is given. :func:`merge_enrichment` then builds
-the final structured plan from the canonical syllabus and drops anything the
-model returned for an unknown topic. As a result the model can no longer:
-
-  * omit or add topics (the "missing Unit 4" bug),
-  * invent teaching hours,
-  * fabricate textbook references.
-
-Failure handling
-----------------
-Provider failures are classified instead of collapsing into a single 503:
-
-    AIConfigurationError  -- bad/absent credentials, model not permitted
-    AIRateLimitError      -- provider throttling (retryable, 429)
-    AIServiceUnavailableError -- network/timeout/5xx (retryable, 503)
-    AIGenerationError     -- the model replied but the payload was unusable (502)
-
-The blocking Groq SDK call is executed on a worker thread so a slow model call
-can never stall the FastAPI event loop for other requests.
-"""
-
-from __future__ import annotations
-
-import asyncio
 import json
 import re
 
@@ -41,41 +6,27 @@ from pydantic import ValidationError
 
 from app.config.logger import logger
 from app.config.settings import settings
-from app.schemas.lesson_plan_schema import (
-    LearningOutcome,
-    LessonPlanAIOutput,
-    LessonPlanEnrichment,
-    TopicPlan,
-    UnitPlan,
-)
-from app.schemas.syllabus_schema import CanonicalSyllabus
+from app.schemas.lesson_plan_schema import LessonPlanAIOutput
 
 
 class AIGenerationError(Exception):
-    """The model responded but its output could not be parsed/validated (-> 502).
+    """Raised when the AI model output cannot be parsed or validated.
 
-    Carries only a safe, client-facing message; the underlying detail is logged
-    server-side and never surfaced to the caller.
+    Carries only a safe, client-facing message; the underlying detail is
+    logged server-side and never surfaced to the caller. The API layer maps
+    this to a 502 (bad upstream response).
     """
 
 
 class AIServiceUnavailableError(AIGenerationError):
-    """The provider could not be reached (network/timeout/5xx) (-> 503).
+    """Raised when the Groq provider itself cannot be reached / fails.
 
-    Subclasses :class:`AIGenerationError` so existing
-    ``except AIGenerationError`` handlers keep working.
-    """
-
-
-class AIRateLimitError(AIServiceUnavailableError):
-    """The provider throttled the request (-> 429). Retryable after a delay."""
-
-
-class AIConfigurationError(AIServiceUnavailableError):
-    """The AI provider rejected our credentials / model access (-> 500).
-
-    This is a server misconfiguration, not something the caller can fix by
-    retrying, so it is reported separately from a transient outage.
+    Covers network errors, timeouts, authentication/rate-limit failures and
+    any other transport-level problem talking to Groq. It subclasses
+    :class:`AIGenerationError` so existing ``except AIGenerationError`` handlers
+    keep working, while the API layer can map it to a 503 (dependency
+    unavailable). The underlying exception is logged server-side only — API
+    keys, provider internals and raw messages are never surfaced.
     """
 
 
@@ -83,16 +34,8 @@ client = Groq(api_key=settings.GROQ_API_KEY)
 
 _MODEL = settings.GROQ_MODEL
 
-# Bloom levels the model is allowed to use (anything else is discarded).
-BLOOM_LEVELS = (
-    "Remember",
-    "Understand",
-    "Apply",
-    "Analyze",
-    "Evaluate",
-    "Create",
-)
-
+# The exact JSON shape the model must emit. Kept in the prompt so the model has
+# a concrete target; the response is validated against LessonPlanAIOutput.
 _SCHEMA_HINT = """{
   "course_title": "string",
   "course_objectives": ["string"],
@@ -107,20 +50,16 @@ _SCHEMA_HINT = """{
         {
           "topic_id": "U1-T1",
           "topic": "string",
-          "subtopics": ["string"],
           "estimated_hours": 1,
           "bloom_level": "Understand",
           "learning_outcomes": ["CO1"],
           "teaching_methods": ["Lecture"],
-          "assessment_methods": ["Quiz"],
-          "references": ["string"]
+          "assessment_methods": ["Quiz"]
         }
       ]
     }
   ],
-  "overall_teaching_methods": ["string"],
-  "overall_assessment_methods": ["string"],
-  "references": ["string"]
+  "references": ["T1: Full Textbook Name by Author", "R1: Full Reference Name by Author"]
 }"""
 
 
@@ -138,14 +77,19 @@ Strict rules:
 - Do NOT return Markdown.
 - Do NOT wrap the JSON in ```json fences or any other fences.
 - Do NOT add explanations, comments, or prose outside the JSON.
+- CRITICAL REQUIREMENT: You MUST generate EXACTLY 9 individual, distinct teaching topics for EVERY single unit in the syllabus. If there are 5 units, you must output EXACTLY 45 topics in total (9 per unit).
+- ABSOLUTE MANDATE: You MUST generate ALL 5 UNITS. Do not stop at Unit 1. Do not stop at Unit 2. Generate Unit 1, 2, 3, 4, and 5.
+- ABSOLUTE MANDATE: Each unit MUST contain exactly 9 topics. Not 6, not 8, but exactly 9 topics.
 - Follow the schema keys and nesting exactly.
-- Do NOT invent topics unrelated to the supplied syllabus.
+- Do NOT invent topics unrelated to the supplied syllabus. Use the actual topic content from the syllabus uploaded.
 - Preserve the unit and topic ordering from the syllabus where possible.
-- Estimate realistic teaching hours as numbers (estimated_hours numeric, unit_number integer).
+- CRITICAL REQUIREMENT: Do NOT stop early. Do NOT summarize or condense units. You MUST generate ALL units present in the syllabus.
+- Each topic MUST have `estimated_hours` set to exactly 1. Do NOT set `estimated_hours` higher than 1.
+- Do NOT group an entire unit into a single topic. Break the unit's content down across exactly 9 distinct hours. If a concept spans multiple hours, list it as "Part 1", "Part 2", etc.
 - Assign useful Bloom's taxonomy levels (Remember, Understand, Apply, Analyze, Evaluate, Create).
 - Choose suitable teaching pedagogies (methods) strictly from this EXACT list: "Chalk & Talk", "NPTEL/OBL", "Group Learning and Teaching", "Individual Learning/Self-study", "Game based learning", "Technology based learning", "Peer teaching", "Learning through problem solving", "Project based learning", "Flipped Class room". Do NOT use abbreviations; use the full statement exactly as written.
 - Choose suitable assessment methods (e.g. Quiz, Assignment, Internal Assessment, Project).
-- Base references on the syllabus / reference material when available; otherwise use realistic academic references.
+- REFERENCES: In the root `references` array, list the textbooks and reference books from the syllabus using codes like "T1: Full Book Name by Author, Publisher, Year", "R1: Full Reference Name". Use T for textbooks, R for references. Base these on the syllabus reference material when available; otherwise use realistic academic references for the subject.
 
 Syllabus:
 
@@ -169,10 +113,12 @@ def _extract_json_payload(raw: str) -> str:
     # Strip Qwen3 thinking blocks: <think>...</think>
     candidate = re.sub(r"<think>.*?</think>", "", candidate, flags=re.DOTALL).strip()
 
+    # Strip fenced code blocks like ```json\n{...}\n``` or ```\n{...}\n```.
     fence = re.search(r"```(?:json)?\s*(.*?)\s*```", candidate, re.DOTALL | re.IGNORECASE)
     if fence:
         candidate = fence.group(1).strip()
 
+    # If there is still surrounding prose, slice from the first { to the last }.
     if not candidate.startswith("{"):
         start = candidate.find("{")
         end = candidate.rfind("}")
@@ -212,191 +158,49 @@ async def generate_lesson_plan(text: str) -> LessonPlanAIOutput:
     try:
         response = client.chat.completions.create(
             model=_MODEL,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": "/no_think"},
+                {"role": "user", "content": prompt},
+            ],
             temperature=0.5,
-            response_format={"type": "json_object"},
+            max_tokens=6000,
         )
     except GroqError as exc:
         logger.error("Groq provider call failed: %s — %s", type(exc).__name__, exc)
         logger.debug("Groq failure detail", exc_info=exc)
-        raise classify_provider_error(exc) from exc
-    except (AttributeError, IndexError, TypeError) as exc:
-        logger.error("Malformed AI response envelope: %s", exc)
-        raise AIGenerationError("AI enrichment failed to produce valid output.") from exc
+        raise AIServiceUnavailableError(
+            "The AI service is temporarily unavailable. Please try again later."
+        ) from exc
     except Exception as exc:  # pragma: no cover - unexpected transport failure
         logger.exception("Unexpected error calling the AI provider")
-        raise classify_provider_error(exc) from exc
+        raise AIServiceUnavailableError(
+            "The AI service is temporarily unavailable. Please try again later."
+        ) from exc
+
+    # Guard against an empty / malformed provider envelope before indexing it,
+    # so a missing choice never raises an unhandled IndexError/AttributeError.
+    raw = None
+    try:
+        if response is not None and response.choices:
+            raw = response.choices[0].message.content
+    except (AttributeError, IndexError, TypeError) as exc:
+        logger.error("Malformed AI response envelope: %s", exc)
+        raise AIGenerationError("AI generation failed to produce valid output.") from exc
 
     if raw is None or not str(raw).strip():
         logger.error("AI provider returned an empty response body")
-        raise AIGenerationError("AI enrichment failed to produce valid output.")
+        raise AIGenerationError("AI generation failed to produce valid output.")
 
     try:
-        data = json.loads(_extract_json_payload(raw))
+        payload = _extract_json_payload(raw)
+        data = json.loads(payload)
     except (ValueError, json.JSONDecodeError) as exc:
-        logger.error("Failed to parse AI enrichment JSON: %s", exc)
+        logger.error("Failed to parse AI lesson-plan JSON: %s", exc)
         logger.debug("Raw AI response was: %r", raw)
-        raise AIGenerationError("AI enrichment failed to produce valid output.") from exc
+        raise AIGenerationError("AI generation failed to produce valid output.") from exc
 
     try:
-        return LessonPlanEnrichment.model_validate(data)
+        return LessonPlanAIOutput.model_validate(data)
     except ValidationError as exc:
-        logger.error("AI enrichment JSON failed schema validation: %s", exc)
-        raise AIGenerationError("AI enrichment failed to produce valid output.") from exc
-
-
-# ---------------------------------------------------------------------------
-# Merge: canonical syllabus (+ optional enrichment) -> structured plan
-# ---------------------------------------------------------------------------
-
-
-def _clean_list(values, allowed: set[str] | None = None) -> list[str]:
-    out: list[str] = []
-    for value in values or []:
-        text = str(value).strip()
-        if not text:
-            continue
-        if allowed is not None and text.upper() not in allowed:
-            continue
-        if text not in out:
-            out.append(text)
-    return out
-
-
-def _clean_bloom(value) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    for level in BLOOM_LEVELS:
-        if text.lower() == level.lower():
-            return level
-    return None
-
-
-def merge_enrichment(
-    canonical: CanonicalSyllabus,
-    enrichment: LessonPlanEnrichment | None,
-    course_title: str | None = None,
-) -> LessonPlanAIOutput:
-    """Build the structured plan from the canonical syllabus.
-
-    The canonical syllabus is authoritative for every structural field. The
-    enrichment payload may only fill in pedagogy for topics that already exist:
-
-      * an enrichment entry for an unknown ``topic_id`` is discarded,
-      * a canonical topic with no enrichment keeps empty pedagogy fields,
-      * hours and references are always taken from the syllabus.
-
-    Passing ``enrichment=None`` (an AI failure) therefore yields a complete,
-    fully usable plan with blank pedagogy rather than nothing at all.
-    """
-    canonical_topic_ids = {
-        topic.topic_id.upper()
-        for _, topic in canonical.iter_topics()
-    }
-    by_topic: dict[str, object] = {}
-    for entry in (enrichment.topics if enrichment else []) or []:
-        topic_id = str(entry.topic_id).strip().upper()
-        
-        # AI cannot create a new academic topic.
-        if topic_id not in canonical_topic_ids:
-            continue
-            
-        # Keep the first valid enrichment for duplicate topic IDs.
-        by_topic.setdefault(topic_id, entry)
-
-    allowed_outcomes = {
-        outcome.outcome_id.strip().upper()
-        for outcome in canonical.course_outcomes
-    }
-    outcome_bloom: dict[str, str] = {}
-    for entry in (enrichment.outcomes if enrichment else []) or []:
-        outcome_id = str(entry.outcome_id).strip().upper()
-
-        # AI may enrich only outcomes defined by the syllabus.
-        if outcome_id not in allowed_outcomes:
-            continue
-
-        level = _clean_bloom(entry.bloom_level)
-        if level:
-            outcome_bloom[outcome_id] = level
-
-    # Textbooks and references are course-level facts printed in the syllabus.
-    # Attaching them to each topic keeps the ACE export's "Text Book/Resource"
-    # column truthful without ever inventing a source.
-    topic_resources = list(canonical.textbooks)
-
-    units: list[UnitPlan] = []
-    for unit in canonical.units:
-        topics: list[TopicPlan] = []
-        for topic in unit.topics:
-            entry = by_topic.get(topic.topic_id.upper())
-            topics.append(
-                TopicPlan(
-                    topic_id=topic.topic_id,
-                    topic=topic.topic,
-                    subtopics=_clean_list(getattr(entry, "subtopics", None)),
-                    estimated_hours=topic.hours,
-                    bloom_level=_clean_bloom(getattr(entry, "bloom_level", None)),
-                    learning_outcomes=_clean_list(
-                        getattr(entry, "learning_outcomes", None),
-                        allowed=allowed_outcomes or None,
-                    ),
-                    teaching_methods=_clean_list(getattr(entry, "teaching_methods", None)),
-                    assessment_methods=_clean_list(
-                        getattr(entry, "assessment_methods", None)
-                    ),
-                    references=list(topic_resources),
-                )
-            )
-        units.append(
-            UnitPlan(
-                unit_number=unit.unit_number,
-                unit_title=unit.unit_title,
-                topics=topics,
-            )
-        )
-
-    learning_outcomes = [
-        LearningOutcome(
-            outcome_id=outcome.outcome_id,
-            description=outcome.description,
-            bloom_level=outcome_bloom.get(outcome.outcome_id.upper(), ""),
-        )
-        for outcome in canonical.course_outcomes
-    ]
-
-    title = (
-        (course_title or "").strip()
-        or (canonical.course_title or "").strip()
-        or (canonical.course_code or "").strip()
-        or "Untitled course"
-    )
-
-    return LessonPlanAIOutput(
-        course_title=title,
-        course_objectives=list(canonical.course_objectives),
-        learning_outcomes=learning_outcomes,
-        units=units,
-        overall_teaching_methods=_clean_list(
-            enrichment.overall_teaching_methods if enrichment else None
-        ),
-        overall_assessment_methods=_clean_list(
-            enrichment.overall_assessment_methods if enrichment else None
-        ),
-        references=list(canonical.textbooks) + list(canonical.references),
-    )
-
-
-def structured_to_topic_text(plan: LessonPlanAIOutput) -> str:
-    """Flatten the structured plan into an ordered newline-delimited topic list.
-
-    Preserves backward compatibility with consumers that read the flat
-    ``lesson_plan`` string (splitting it on newlines into teachable topics).
-    """
-    lines: list[str] = []
-    for unit in plan.units:
-        for topic in unit.topics:
-            if topic.topic and topic.topic.strip():
-                lines.append(topic.topic.strip())
-    return "\n".join(lines)
+        logger.error("AI lesson-plan JSON failed schema validation: %s", exc)
+        raise AIGenerationError("AI generation failed to produce valid output.") from exc
