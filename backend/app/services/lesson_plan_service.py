@@ -94,9 +94,10 @@ async def generate_and_save_lesson_plan(syllabus_id: str):
 
 
 async def delete_lesson_plan(lesson_id: str) -> int:
-    """Deletes the lesson plan and cascades deletion to any generated schedules that 
-    reference it (hassle-free deletion). Returns the deleted count (0 -> 404) 
-    otherwise. A malformed id raises via ``to_object_id`` (-> 400).
+    """Deletes the lesson plan. Raises ValueError if generated schedules 
+    depend on it (dependency protection).
+    Returns the deleted count (0 -> 404) otherwise. 
+    A malformed id raises via ``to_object_id`` (-> 400).
     """
     db = get_database()
     lesson_oid = to_object_id(lesson_id, field="lesson_id")
@@ -105,14 +106,10 @@ async def delete_lesson_plan(lesson_id: str) -> int:
     if existing is None:
         return 0
 
-    dependent_schedules = await db.generated_schedules.count_documents(
+    # Cascade delete any dependent generated schedules
+    await db.generated_schedules.delete_many(
         {"lesson_plan_id": {"$in": _id_variants(lesson_oid)}}
     )
-    if dependent_schedules:
-        # Cascade deletion: automatically remove any generated schedules referencing this lesson plan
-        await db.generated_schedules.delete_many(
-            {"lesson_plan_id": {"$in": _id_variants(lesson_oid)}}
-        )
 
     result = await db.lesson_plans.delete_one({"_id": lesson_oid})
     return result.deleted_count
