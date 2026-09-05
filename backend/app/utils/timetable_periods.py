@@ -39,6 +39,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Optional
 
+from app.utils.scheduling_rules import MAX_HOURS_PER_DAY
+
 # --- Canonical period structure ---------------------------------------------
 
 #: Lowest / highest teaching period number.
@@ -52,15 +54,9 @@ TEACHING_PERIODS: tuple[int, ...] = tuple(range(PERIOD_MIN, PERIOD_MAX + 1))
 #: never itself a period number, so it can never be scheduled as a class.
 LUNCH_AFTER_PERIOD = 4
 
-#: Weekdays the college timetable runs on (Monday - Saturday). Sunday is
-#: intentionally excluded: it is not a teaching day for this timetable.
-TIMETABLE_WEEKDAYS: tuple[str, ...] = (
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
+#: Weekdays the college timetable runs on. Derived from MAX_HOURS_PER_DAY.
+TIMETABLE_WEEKDAYS: tuple[str, ...] = tuple(
+    day for day, hours in MAX_HOURS_PER_DAY.items() if hours > 0
 )
 
 _TIMETABLE_WEEKDAY_SET = frozenset(TIMETABLE_WEEKDAYS)
@@ -78,6 +74,8 @@ _WEEKDAY_ALIASES = {
     "thurs": "Thursday",
     "fri": "Friday",
     "sat": "Saturday",
+    "satu": "Saturday",
+    "satday": "Saturday",
 }
 
 
