@@ -103,6 +103,7 @@ async def create_course(data):
         credits=data.credits,
         faculty_id=faculty_oid,
         academic_year=data.academic_year,
+        short_form=data.short_form,
     )
 
     try:
@@ -184,6 +185,7 @@ async def update_course(course_id: str, data):
         "credits": data.credits,
         "faculty_id": faculty["_id"],
         "academic_year": data.academic_year,
+        "short_form": data.short_form,
         "updated_at": datetime.now(UTC),
     }
 
