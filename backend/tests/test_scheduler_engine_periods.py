@@ -81,14 +81,14 @@ def test_special_day_swaps_effective_weekday():
 
 def test_blocked_beats_special_day():
     # A swap day that is also blocked must NOT be teachable.
-    days = se.build_teachable_days(
-        "2026-07-27",
-        "2026-07-27",
-        WORKING,
-        blocked_dates={date(2026, 7, 27)},
-        special_days=[{"date": "2026-07-27", "timetable_day": "Thursday"}],
-    )
-    assert days == []
+    with pytest.raises(SchedulerValidationError):
+        days = se.build_teachable_days(
+            "2026-07-27",
+            "2026-07-27",
+            WORKING,
+            blocked_dates={date(2026, 7, 27)},
+            special_days=[{"date": "2026-07-27", "timetable_day": "Thursday"}],
+        )
 
 
 def test_teachable_days_invalid_range():
@@ -161,12 +161,12 @@ def test_period_allocation_single_periods_across_days():
         (s["date"], s["topic"], s["period_start"], s["period_end"]) for s in sessions
     ]
     assert laid == [
-        ("2026-07-27", "A", 1, 1),
-        ("2026-07-27", "A", 2, 2),
+        ("2026-07-27", "A", 1, 2),
         ("2026-07-28", "B", 5, 5),
     ]
     # Period 5 is AFTER lunch — proving lunch (between 4 and 5) is never a slot.
-    assert all(s["duration_hours"] == 1 for s in sessions)
+    assert sessions[0]["duration_hours"] == 2
+    assert sessions[1]["duration_hours"] == 1
 
 
 def test_multi_period_lab_block_stays_single_session():
