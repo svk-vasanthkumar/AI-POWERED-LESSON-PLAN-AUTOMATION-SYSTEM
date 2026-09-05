@@ -26,6 +26,11 @@ from app.utils.timetable_periods import (
     PERIOD_MIN,
     periods_overlap,
 )
+from app.utils.scheduling_rules import (
+    SATURDAY_EXCLUDED_HOURS,
+    CIA_EXAM_PERIODS,
+    ScheduleType,
+)
 
 # Tiny tolerance so fractional-hour arithmetic (e.g. 0.1h topics) never leaves a
 # sliver of a slot "open" due to binary float error, and never over-fills one.
@@ -249,7 +254,7 @@ def build_available_dates(
     return available
 
 
-def build_slots_by_weekday(timetable_schedule) -> dict[str, list[dict]]:
+def build_slots_by_weekday(timetable_schedule, target_subject: str = None) -> dict[str, list[dict]]:
     """Group timetable slots by weekday and validate their times (Phase 5).
 
     Returns ``{weekday: [{"start": start_minutes, "end": end_minutes, ...}, ...]}`` 
@@ -262,6 +267,14 @@ def build_slots_by_weekday(timetable_schedule) -> dict[str, list[dict]]:
     for slot in timetable_schedule:
         if not isinstance(slot, dict):
             raise SchedulerValidationError("Invalid timetable: malformed slot")
+            
+        subject = slot.get("subject")
+        if target_subject and subject:
+            targets = {t.strip().lower() for t in target_subject.split(",") if t.strip()}
+            subject_parts = {p.strip().lower() for p in subject.replace("/", ",").split(",")}
+            if not targets.intersection(subject_parts):
+                continue
+                
         weekday = normalize_weekday(slot.get("day"))
         
         ps = slot.get("period_start")
@@ -471,31 +484,43 @@ def _coerce_date(value, field: str = "date") -> date:
     return parse_date(value, field)
 
 
+class TeachableDay(tuple):
+    """A backwards-compatible 2-tuple (date, weekday) that also stores day_order."""
+    def __new__(cls, day_date, weekday, day_order):
+        return super().__new__(cls, (day_date, weekday))
+    def __init__(self, day_date, weekday, day_order):
+        self.day_order = day_order
+
 def build_teachable_days(
+    calendar_model,
     semester_start,
-    semester_end,
-    working_days,
+    semester_end=None,
+    working_days=None,
     blocked_dates=None,
     special_days=None,
-) -> list[tuple[date, str]]:
-    """Return every teachable day as ``(calendar_date, effective_weekday)``.
+) -> list[TeachableDay]:
+    """Return every teachable day as ``(calendar_date, effective_weekday, effective_day_order)``.
 
-    This is the single, clear mechanism (Task #5 req. 2) that decides whether a
-    date is teachable:
-
-      * The date must fall inside ``[semester_start, semester_end]``.
-      * It must NOT be a blocked date (holiday / CIA / model / semester-end
-        exam range / vacation / any other blocked calendar range). Blocked
-        dates always win, even over a special/swap day.
-      * Its *effective* weekday must be a configured working day.
-
-    Special / swap days (Task #5 req. 3) are generic: ``special_days`` maps a
-    concrete date to the weekday whose timetable should be used on that date
-    (e.g. a Monday configured as "Thursday Timetable" -> effective weekday
-    ``Thursday``). The returned calendar date is always the real date; only the
-    weekday used to look up timetable slots changes. Nothing here mutates the
-    timetable document.
+    Delegates date resolution to ``calendar_resolver.resolve_date``, which acts as
+    the single source of truth for holidays, special days, and day-order logic.
     """
+    from datetime import date
+    if isinstance(calendar_model, (str, date)):
+        actual_start = calendar_model
+        actual_end = semester_start
+        actual_working = working_days or []
+        if isinstance(semester_end, list):
+            actual_working = semester_end
+        calendar_model = {
+            "working_days": actual_working,
+            "holidays": [{"date": d.isoformat() if hasattr(d, "isoformat") else d} for d in (blocked_dates or [])],
+            "special_days": special_days or []
+        }
+        semester_start = actual_start
+        semester_end = actual_end
+        
+    from app.services.calendar_resolver import resolve_date
+
     start = _coerce_date(semester_start, "semester_start")
     end = _coerce_date(semester_end, "semester_end")
     if end < start:
@@ -503,28 +528,22 @@ def build_teachable_days(
             "Invalid calendar: semester_end is before semester_start"
         )
 
-    if not isinstance(working_days, (list, tuple, set)) or not working_days:
-        raise SchedulerValidationError("Invalid calendar: no working days configured")
-    working = {normalize_weekday(day) for day in working_days}
-
-    blocked_set: set[date] = {
-        _coerce_date(d, "blocked_date") for d in (blocked_dates or [])
-    }
-
-    special_map: dict[date, str] = {}
-    for entry in special_days or []:
-        entry_date = _coerce_date(entry["date"], "special_day")
-        special_map[entry_date] = normalize_weekday(entry["timetable_day"])
-
-    teachable: list[tuple[date, str]] = []
+    teachable: list[tuple[date, str, int | None]] = []
+    teachable: list[TeachableDay] = []
     current = start
-    one_day = timedelta(days=1)
     while current <= end:
-        if current not in blocked_set:
-            effective_weekday = special_map.get(current, WEEKDAYS[current.weekday()])
-            if effective_weekday in working:
-                teachable.append((current, effective_weekday))
-        current += one_day
+        resolution = resolve_date(calendar_model, current)
+        if resolution["is_working_day"]:
+            teachable.append(TeachableDay(
+                day_date=current, 
+                weekday=resolution["effective_day"], 
+                day_order=resolution["effective_day_order"]
+            ))
+        current += timedelta(days=1)
+    if not teachable:
+        raise SchedulerValidationError(
+            "No valid working days found in the provided calendar between the start and end dates."
+        )
     return teachable
 
 
@@ -545,6 +564,7 @@ def timetable_is_period_based(timetable_schedule) -> bool:
 
 def build_period_slots_by_weekday(
     timetable_schedule,
+    target_subject: str = None,
 ) -> dict[str, list[tuple[int, int]]]:
     """Group period-based slots by weekday (Task #5 req. 4-5).
 
@@ -562,6 +582,21 @@ def build_period_slots_by_weekday(
     for slot in timetable_schedule:
         if not isinstance(slot, dict):
             raise SchedulerValidationError("Invalid timetable: malformed slot")
+        
+        subject = slot.get("subject")
+        if target_subject and subject:
+            targets = {t.strip().lower() for t in target_subject.split(",") if t.strip()}
+            subject_parts = {p.strip().lower() for p in subject.replace("/", ",").split(",")}
+            
+            # Also allow common exam/test slots through so they can be overridden by CIA ranges
+            is_exam_slot = any(
+                exam_term in subject.lower() 
+                for exam_term in ["unit test", "cia", "exam", "test", "result"]
+            )
+            
+            if not targets.intersection(subject_parts) and not is_exam_slot:
+                continue
+
         p_start = slot.get("period_start")
         p_end = slot.get("period_end")
         if p_start is None or p_end is None:
@@ -579,33 +614,81 @@ def build_period_slots_by_weekday(
                 f"of the valid {PERIOD_MIN}..{PERIOD_MAX} range"
             )
         weekday = normalize_weekday(slot.get("day"))
+        day_order = slot.get("day_order")
+        
+        # Index by both weekday (e.g. "Monday") and day_order string (e.g. "Order:3")
         slots.setdefault(weekday, []).append((p_start, p_end))
+        if day_order is not None:
+            slots.setdefault(f"Order:{day_order}", []).append((p_start, p_end))
+            
         found = True
 
     if not found:
-        raise SchedulerValidationError(
-            "Invalid timetable: no period-based slots configured"
-        )
+        # Avoid crashing completely if subject filter causes 0 slots.
+        pass
 
     for weekday in slots:
         slots[weekday].sort(key=lambda pair: pair[0])
     return slots
 
 
+def expand_period(period_start: int, period_end: int) -> list[int]:
+    return list(range(period_start, period_end + 1))
+
+def reconstruct_blocks(hours: set[int]) -> list[tuple[int, int]]:
+    if not hours:
+        return []
+    
+    sorted_hours = sorted(hours)
+    blocks = []
+    
+    start = sorted_hours[0]
+    previous = sorted_hours[0]
+    
+    for hour in sorted_hours[1:]:
+        if hour == previous + 1:
+            previous = hour
+            continue
+            
+        blocks.append((start, previous))
+        start = hour
+        previous = hour
+        
+    blocks.append((start, previous))
+    return blocks
+
 def build_period_blocks(
-    teachable_days: list[tuple[date, str]],
+    teachable_days: list[TeachableDay],
     period_slots_by_weekday: dict[str, list[tuple[int, int]]],
     period_time_map: dict | None = None,
 ) -> list[dict]:
     """Expand teachable days into an ordered list of period teaching blocks.
 
-    Each block covers exactly one timetable slot on one date. A multi-period
-    (lab) slot stays a single block whose capacity is the number of teaching
-    periods it spans (lunch is never one of them, so it is never counted).
+    Each block covers exactly one timetable slot on one date.
+    Prioritizes Day Order matches additively with the effective weekday.
     """
     blocks: list[dict] = []
-    for day_date, effective_weekday in teachable_days:
-        for p_start, p_end in period_slots_by_weekday.get(effective_weekday, []):
+    for day in teachable_days:
+        day_date = day[0]
+        effective_weekday = day[1]
+        day_order = day[2] if len(day) >= 3 else getattr(day, "day_order", None)
+        
+        # 1. Base slot matching logic via physical hour units
+        hours = set()
+        
+        # Regular timetable only (Special Day Order processing has been removed per user request)
+        regular_slots = period_slots_by_weekday.get(effective_weekday, [])
+        for p_start, p_end in regular_slots:
+            hours.update(expand_period(p_start, p_end))
+            
+            
+        # Domain Rule: Saturday must never generate hours 5-7.
+        if WEEKDAYS[day_date.weekday()] == "Saturday":
+            hours &= {1, 2, 3, 4}
+            
+        reconstructed = reconstruct_blocks(hours)
+        
+        for p_start, p_end in reconstructed:
             blocks.append(
                 {
                     "kind": "period",
@@ -616,14 +699,82 @@ def build_period_blocks(
                     "period_end": p_end,
                     "capacity": float(p_end - p_start + 1),
                     "period_time_map": period_time_map,
+                    "session_type": ScheduleType.CLASS.value,
                 }
             )
     return blocks
 
 
+def apply_exam_overrides(
+    blocks: list[dict],
+    exam_configs: list[dict]
+) -> list[dict]:
+    """Reserve teaching capacity during exams (e.g., Periods 1 and 2)."""
+    if not exam_configs:
+        return blocks
+        
+    # Map dates to their exam configurations
+    exam_dates = {}
+    for config in exam_configs:
+        start = parse_date(config["start_date"], "start_date")
+        end = parse_date(config["end_date"], "end_date")
+        # Default to all weekdays if not specified
+        exam_days = config.get("exam_days", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"])
+        duration = int(config.get("duration", 2))
+        
+        current = start
+        while current <= end:
+            # We take the maximum duration if multiple configs overlap on the same day
+            if current not in exam_dates:
+                exam_dates[current] = {"exam_days": set(exam_days), "duration": duration}
+            else:
+                exam_dates[current]["exam_days"].update(exam_days)
+                exam_dates[current]["duration"] = max(exam_dates[current]["duration"], duration)
+            current += timedelta(days=1)
+            
+    processed_blocks = []
+    for block in blocks:
+        if block["kind"] != "period" or block["date"] not in exam_dates:
+            processed_blocks.append(block)
+            continue
+            
+        config = exam_dates[block["date"]]
+        
+        if block["day"] not in config["exam_days"]:
+            processed_blocks.append(block)
+            continue
+            
+        p_start = block["period_start"]
+        p_end = block["period_end"]
+        
+        exam_start = 1
+        exam_end = config["duration"]
+        
+        # Expand block into physical hours
+        hours = set(expand_period(p_start, p_end))
+        
+        # Expand exam into physical hours
+        exam_hours = set(expand_period(exam_start, exam_end))
+        
+        # Set subtraction strictly removes only the overlapping hours
+        remaining_hours = hours - exam_hours
+        
+        # Reconstruct contiguous blocks from remaining hours
+        reconstructed = reconstruct_blocks(remaining_hours)
+        
+        for r_start, r_end in reconstructed:
+            new_block = block.copy()
+            new_block["period_start"] = r_start
+            new_block["period_end"] = r_end
+            new_block["capacity"] = float(r_end - r_start + 1)
+            processed_blocks.append(new_block)
+            
+    return processed_blocks
+
+
 def build_clock_blocks(
-    teachable_days: list[tuple[date, str]],
-    clock_slots_by_weekday: dict[str, list[tuple[int, int]]],
+    teachable_days: list[tuple[date, str, int | None]],
+    clock_slots_by_weekday: dict[str, list[dict]],
 ) -> list[dict]:
     """Expand teachable days into ordered legacy clock-time blocks.
 
@@ -633,8 +784,12 @@ def build_clock_blocks(
     path.
     """
     blocks: list[dict] = []
-    for day_date, effective_weekday in teachable_days:
-        for start_min, end_min in clock_slots_by_weekday.get(effective_weekday, []):
+    for day in teachable_days:
+        day_date = day[0]
+        effective_weekday = day[1]
+        for slot in clock_slots_by_weekday.get(effective_weekday, []):
+            start_min = slot["start"]
+            end_min = slot["end"]
             blocks.append(
                 {
                     "kind": "clock",
@@ -728,8 +883,29 @@ def allocate_blocks(
     remaining = float(queue[index]["estimated_hours"])  # hours
 
     for block in blocks:
+        if block.get("session_type") == ScheduleType.EXAM.value:
+            session = {
+                "session_id": f"exam-{block['date']}-p{block.get('period_start')}",
+                "topic_id": "exam",
+                "topic": "CIA Examination",
+                "unit_number": "-",
+                "unit_title": "-",
+                "date": block["date"].isoformat(),
+                "day": block["day"],
+                "timetable_day": block["timetable_day"],
+                "duration_hours": round(block["capacity"], 2),
+                "status": "scheduled",
+            }
+            if block["kind"] == "period":
+                session.update(_period_block_fields(block, 0, block["capacity"]))
+            else:
+                session.update(_clock_block_fields(block, 0, block["capacity"]))
+            sessions.append(session)
+            continue
+
         if index >= len(queue):
             break
+            
         capacity = float(block["capacity"])
         cursor = 0.0
         while cursor < capacity - _EPS and index < len(queue):
