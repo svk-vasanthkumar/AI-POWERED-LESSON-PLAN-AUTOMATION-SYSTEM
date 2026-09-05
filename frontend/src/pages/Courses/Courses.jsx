@@ -37,7 +37,8 @@ const Courses = () => {
     semester: 1,
     credits: 3,
     academic_year: '2026-2027',
-    faculty_id: user?.id || user?._id || ''
+    faculty_id: user?.id || user?._id || '',
+    short_form: ''
   });
 
   const fetchData = async () => {
@@ -78,7 +79,8 @@ const Courses = () => {
       semester: 1,
       credits: 3,
       academic_year: '2026-2027',
-      faculty_id: user?.id || user?._id || ''
+      faculty_id: user?.id || user?._id || '',
+      short_form: ''
     });
     setError('');
     setShowModal(true);
@@ -94,7 +96,8 @@ const Courses = () => {
       semester: course.semester,
       credits: course.credits,
       academic_year: course.academic_year || '2026-2027',
-      faculty_id: course.faculty_id
+      faculty_id: course.faculty_id,
+      short_form: course.short_form || ''
     });
     setError('');
     setShowModal(true);
@@ -304,7 +307,14 @@ const Courses = () => {
                 </div>
               </div>
               <h3 className="course-title">{course.course_name}</h3>
-              <p className="course-code">{course.course_code}</p>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem' }}>
+                <p className="course-code" style={{ marginBottom: 0 }}>{course.course_code}</p>
+                {course.short_form && (
+                  <span className="badge" style={{ backgroundColor: '#e2e8f0', color: '#475569', fontSize: '0.7rem' }}>
+                    {course.short_form}
+                  </span>
+                )}
+              </div>
               
               <div className="course-details">
                 <div className="detail-item">
@@ -378,17 +388,30 @@ const Courses = () => {
                   </div>
                 </div>
 
-                <div className="form-group mb-4">
-                  <label className="form-label">Course Name</label>
-                  <input 
-                    type="text" 
-                    className="form-control" 
-                    name="course_name"
-                    value={formData.course_name}
-                    onChange={handleChange}
-                    placeholder="e.g. Introduction to Computer Science"
-                    required
-                  />
+                <div className="form-row" style={{ display: 'flex', gap: '1rem' }}>
+                  <div className="form-group mb-4" style={{ flex: 2 }}>
+                    <label className="form-label">Course Name</label>
+                    <input 
+                      type="text" 
+                      className="form-control" 
+                      name="course_name"
+                      value={formData.course_name}
+                      onChange={handleChange}
+                      placeholder="e.g. Introduction to Computer Science"
+                      required
+                    />
+                  </div>
+                  <div className="form-group mb-4" style={{ flex: 1 }}>
+                    <label className="form-label">Short Form (Optional)</label>
+                    <input 
+                      type="text" 
+                      className="form-control" 
+                      name="short_form"
+                      value={formData.short_form}
+                      onChange={handleChange}
+                      placeholder="e.g. OOPS LAB"
+                    />
+                  </div>
                 </div>
 
                 <div className="form-row" style={{ display: 'flex', gap: '1rem' }}>
