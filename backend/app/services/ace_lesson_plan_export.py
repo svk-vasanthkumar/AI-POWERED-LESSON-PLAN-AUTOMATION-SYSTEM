@@ -163,10 +163,10 @@ def _clean(value) -> str:
 
 
 def map_pedagogy_method(method) -> str | None:
-    """Map ONE free-text teaching method to a college code description, or ``None``.
+    """Map ONE free-text teaching method to a college pedagogy description, or ``None``.
 
-    Deterministic: if a code (e.g. "CT") or keyword is found, return the full
-    pedagogy string (e.g. "Chalk & Talk"). ``None`` means "could not be confidently mapped"
+    Deterministic: if a code (e.g. "CT") or description (e.g. "Chalk & Talk") is found,
+    return the full college description (e.g. "Chalk & Talk"). ``None`` means "could not be confidently mapped"
     — the caller then preserves the original text rather than inventing a code.
     """
     text = _clean(method)
@@ -629,7 +629,7 @@ def export_ace_pdf(context: dict) -> bytes:
         if not context["units"]:
             data.append([P("", st_cell) for _ in context["columns"]])
 
-        col_widths = [3.0 * cm, 2.1 * cm, 3.0 * cm, 4.9 * cm, 2.4 * cm, 2.6 * cm]
+        col_widths = [3.0 * cm, 2.0 * cm, 2.5 * cm, 4.5 * cm, 3.7 * cm, 2.5 * cm]
         table = Table(data, colWidths=col_widths, repeatRows=1)
         style = [
             ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
@@ -663,6 +663,12 @@ def export_ace_pdf(context: dict) -> bytes:
             )
         )
         story.append(sign_table)
+
+        # Note + pedagogy legend.
+        story.append(Spacer(1, 16))
+        story.append(Paragraph("<b>*Pedagogical Approaches:</b>", st_note))
+        for code, desc in context["legend"]:
+            story.append(P(f"    \u2022 {desc} ({code})", st_note))
 
         # Global references
         if context.get("global_references"):
@@ -901,7 +907,7 @@ def export_ace_xlsx(context: dict) -> bytes:
         # Freeze the column header row so it stays visible while scrolling.
         ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
 
-        widths = [20, 14, 20, 40, 20, 24]
+        widths = [18, 12, 18, 30, 24, 18]
         for i, width in enumerate(widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = width
 
@@ -910,6 +916,13 @@ def export_ace_xlsx(context: dict) -> bytes:
         for col, name in zip((1, 3, 5), context["signatories"]):
             ws.cell(row=row, column=col, value=name).font = bold
         row += 2
+
+        # Note + legend.
+        ws.cell(row=row, column=1, value="*Pedagogical Approaches:").font = bold
+        row += 1
+        for code, desc in context["legend"]:
+            ws.cell(row=row, column=1, value=f"    \u2022 {desc} ({code})")
+            row += 1
 
         # Global references
         if context.get("global_references"):
