@@ -22,6 +22,16 @@ export const academicCalendarService = {
     const response = await api.get(`/calendar/${calendarId}`);
     return response.data;
   },
+
+  confirm: async (calendarId, data) => {
+    const response = await api.post(`/calendar/${calendarId}/confirm`, data);
+    return response.data;
+  },
+
+  update: async (calendarId, data) => {
+    const response = await api.put(`/calendar/${calendarId}`, data);
+    return response.data;
+  },
   
   delete: async (calendarId) => {
     const response = await api.delete(`/calendar/${calendarId}`);
