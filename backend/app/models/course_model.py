@@ -11,6 +11,7 @@ def create_course_document(
     credits: int,
     faculty_id: ObjectId,
     academic_year: str,
+    short_form: str = None,
 ):
     return {
         "course_code": course_code.upper(),
@@ -20,6 +21,7 @@ def create_course_document(
         "credits": credits,
         "faculty_id": faculty_id,
         "academic_year": academic_year,
+        "short_form": short_form,
         "created_at": datetime.now(UTC),
         "updated_at": datetime.now(UTC),
     }
