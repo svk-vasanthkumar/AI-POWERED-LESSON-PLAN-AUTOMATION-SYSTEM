@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.auth.dependencies import get_current_user
 from app.schemas.progress_schema import SessionRescheduleRequest, SessionStatusUpdate
+from app.schemas.schedule_schema import GenerateScheduleRequest
 from app.services.export_service import (
     DocumentGenerationError,
     EmptyScheduleError,
@@ -52,6 +53,7 @@ async def generate(
         default=None,
         description="Optional explicit timetable ID to use for scheduling.",
     ),
+    request_body: GenerateScheduleRequest | None = None,
 ):
     """Generate (or regenerate) a conflict-free schedule for a course.
 
@@ -64,11 +66,16 @@ async def generate(
         500  handled by the global exception handler (never leaks internals)
     """
     try:
+        exam_configs = None
+        if request_body and request_body.exam_configs:
+            exam_configs = [config.model_dump() for config in request_body.exam_configs]
+
         return await generate_schedule(
             course_id, 
             academic_year=academic_year,
             calendar_id=calendar_id,
-            timetable_id=timetable_id
+            timetable_id=timetable_id,
+            exam_configs=exam_configs
         )
 
     except SchedulerValidationError as e:
