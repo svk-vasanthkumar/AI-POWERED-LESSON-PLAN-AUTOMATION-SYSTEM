@@ -9,6 +9,7 @@ class CourseCreate(BaseModel):
     credits: int
     faculty_id: str
     academic_year: str
+    short_form: str | None = None
 
 
 class CourseUpdate(BaseModel):
@@ -18,3 +19,4 @@ class CourseUpdate(BaseModel):
     credits: int
     faculty_id: str
     academic_year: str
+    short_form: str | None = None
