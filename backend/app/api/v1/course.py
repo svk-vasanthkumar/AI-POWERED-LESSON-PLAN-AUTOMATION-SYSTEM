@@ -19,7 +19,7 @@ from app.services.course_service import (
 from pydantic import BaseModel, Field
 
 class CourseCloneRequest(BaseModel):
-    new_faculty_id: str = Field(..., description="The ID of the new faculty member to assign")
+    new_faculty_ids: list[str] = Field(..., description="The IDs of the new faculty members to assign")
     new_academic_year: str = Field(..., description="The new academic year (e.g. 2026-2027)")
 
 # Every course endpoint requires a valid Bearer JWT.
@@ -131,7 +131,7 @@ async def remove_course(course_id: str):
 async def clone_existing_course(course_id: str, data: CourseCloneRequest):
     """Clone an existing course, its syllabus, and lesson plan for reuse."""
     try:
-        new_course_id = await clone_course(course_id, data.new_faculty_id, data.new_academic_year)
+        new_course_id = await clone_course(course_id, data.new_faculty_ids, data.new_academic_year)
         return {
             "course_id": new_course_id,
             "message": "Course cloned successfully",
