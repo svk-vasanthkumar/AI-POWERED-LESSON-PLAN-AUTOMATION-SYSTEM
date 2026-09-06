@@ -3,10 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Edit2, Download, Trash2, Search, FileText } from 'lucide-react';
 import { lessonPlanService } from '../../services/lessonPlanService';
 import { courseService } from '../../services/courseService';
+import { useAlert } from '../../context/AlertContext';
 import './LessonPlansList.css';
 
 const LessonPlansList = () => {
   const navigate = useNavigate();
+  const { showAlert } = useAlert();
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -47,7 +49,7 @@ const LessonPlansList = () => {
         await lessonPlanService.delete(id);
         fetchPlans();
       } catch (error) {
-        alert("Failed to delete lesson plan: " + (error.uiMessage || error.message || "Unknown error"));
+        showAlert("Failed to delete lesson plan: " + (error.uiMessage || error.message || "Unknown error"), "error");
       }
     }
   };
