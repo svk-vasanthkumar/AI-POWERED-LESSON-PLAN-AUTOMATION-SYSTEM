@@ -313,6 +313,22 @@ async def update_session_status(
     session["status"] = status_value
 
     if status_value == progress_engine.COMPLETED:
+        if not remarks or not remarks.strip():
+            raise SchedulerValidationError("Faculty remarks are mandatory when marking a session as complete.")
+
+        # RBAC constraint: Admins/HODs cannot complete another faculty's session
+        role = current_user.get("role")
+        if role in ("admin", "hod"):
+            user_email = (current_user.get("email") or "").strip().lower()
+            faculty = await _resolve_faculty(db, schedule.get("faculty_id"))
+            faculty_email = ((faculty or {}).get("email") or "").strip().lower()
+            # If changing from non-completed to completed, block if not owner
+            if current_status != progress_engine.COMPLETED:
+                if user_email and faculty_email and user_email != faculty_email:
+                    raise ProgressPermissionError(
+                        "Admins/HODs cannot mark a session complete for another faculty member"
+                    )
+
         _apply_completion(
             session,
             executed_date,
@@ -458,6 +474,9 @@ async def reschedule_session(
     Unrelated sessions are never modified, and no new schedule version is
     created — a reschedule mutates only the one session in place.
     """
+    if not remarks or not remarks.strip():
+        raise SchedulerValidationError("A reason/remark is mandatory when rescheduling a session.")
+
     db = get_database()
     course_oid = to_object_id(course_id, field="course_id")
 
@@ -573,6 +592,7 @@ async def get_course_progress(course_id: str) -> dict:
         "schedule_id": str(schedule["_id"]),
         "version": serialized.get("version"),
         "active": serialized.get("active"),
+        "faculty_id": str(schedule.get("faculty_id")) if schedule.get("faculty_id") else None,
         "summary": computed["summary"],
         "units": computed["units"],
         "topics": computed["topics"],
