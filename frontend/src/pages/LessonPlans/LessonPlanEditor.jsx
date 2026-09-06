@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Save, ArrowLeft, Download, CheckCircle, Clock, Calendar, X, Plus, Trash2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useAlert } from '../../context/AlertContext';
 import { lessonPlanService } from '../../services/lessonPlanService';
 import { courseService } from '../../services/courseService';
 import { academicCalendarService } from '../../services/academicCalendarService';
@@ -14,6 +15,7 @@ const LessonPlanEditor = () => {
   const { user } = useAuth();
   const { id } = useParams();
   const navigate = useNavigate();
+  const { showAlert } = useAlert();
   const [plan, setPlan] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -81,7 +83,7 @@ const LessonPlanEditor = () => {
         setSessions(initialSessions);
       } catch (error) {
         console.error("Failed to fetch plan:", error);
-        alert("Could not load lesson plan.");
+        showAlert("Could not load lesson plan.", "error");
       } finally {
         setLoading(false);
       }
@@ -149,7 +151,7 @@ const LessonPlanEditor = () => {
       link.parentNode.removeChild(link);
     } catch (error) {
       console.error("Failed to export:", error);
-      alert("Failed to export lesson plan.");
+      showAlert("Failed to export lesson plan.", "error");
     } finally {
       setSaving(false);
     }
@@ -160,10 +162,10 @@ const LessonPlanEditor = () => {
       setSaving(true);
       const payload = { ...plan, sessions };
       await lessonPlanService.update(id, payload);
-      alert("Lesson plan saved successfully!");
+      showAlert("Lesson plan saved successfully!", "success");
     } catch (error) {
       console.error("Failed to save:", error);
-      alert("Failed to save changes.");
+      showAlert("Failed to save changes.", "error");
     } finally {
       setSaving(false);
     }
@@ -175,10 +177,10 @@ const LessonPlanEditor = () => {
       const payload = { ...plan, sessions, status: 'Approved' };
       await lessonPlanService.update(id, payload);
       setPlan(payload);
-      alert("Lesson plan approved!");
+      showAlert("Lesson plan approved!", "success");
     } catch (error) {
       console.error("Failed to approve:", error);
-      alert("Failed to approve lesson plan.");
+      showAlert("Failed to approve lesson plan.", "error");
     } finally {
       setSaving(false);
     }
@@ -295,20 +297,22 @@ const LessonPlanEditor = () => {
         await lessonPlanService.update(id, { ...plan, sessions: mergedSessions });
         
         if (schedule.unscheduled_topics && schedule.unscheduled_topics.length > 0) {
-          alert(`Schedule generated, but ${schedule.unscheduled_topics.length} topics could not fit before the semester ends! They have been added to the bottom of the list without dates.`);
+          showAlert(`Schedule generated, but ${schedule.unscheduled_topics.length} topics could not fit before the semester ends! They have been added to the bottom of the list without dates.`, "warning");
         } else {
-          alert("Schedule generated successfully! All topics were scheduled.");
+          showAlert("Schedule generated successfully! All topics were scheduled.", "success");
         }
       } else {
-        alert("Schedule generation did not return any sessions.");
+        showAlert("Schedule generation did not return any sessions.", "error");
       }
       
       setShowScheduleModal(false);
+      // Wait for modal to be closed and alert to be dismissed before reload?
+      // Actually, better to refetch data instead of reload, but since the reload was here:
       window.location.reload();
     } catch (error) {
       console.error("Failed to generate schedule:", error);
       const errorDetail = error.response?.data?.detail || error.uiMessage || "Failed to generate schedule.";
-      alert(errorDetail);
+      showAlert(errorDetail, "error");
     } finally {
       setGeneratingSchedule(false);
     }
