@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { syllabusService } from '../../services/syllabusService';
 import { academicCalendarService } from '../../services/academicCalendarService';
 import { timetableService } from '../../services/timetableService';
 import { courseService } from '../../services/courseService';
 import { facultyService } from '../../services/facultyService';
 import { FileText, CalendarClock, Table } from 'lucide-react';
+import { useAlert } from '../../context/AlertContext';
 import './DocumentPreview.css';
 
 const DocumentPreview = () => {
   const { type, id } = useParams();
+  const { showAlert } = useAlert();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -133,7 +135,7 @@ const DocumentPreview = () => {
       const updated = await timetableService.getById(id);
       setData(updated);
       setIsEditing(false);
-      alert('Timetable saved successfully!');
+      showAlert('Timetable saved successfully!', 'success');
     } catch (err) {
       console.error(err);
       let errorMsg = err.message;
@@ -147,7 +149,7 @@ const DocumentPreview = () => {
           errorMsg = JSON.stringify(d);
         }
       }
-      alert('Failed to verify timetable:\n' + errorMsg);
+      showAlert('Failed to verify timetable:\n' + errorMsg, 'error');
     } finally {
       setLoading(false);
     }
@@ -305,11 +307,11 @@ const DocumentPreview = () => {
         };
 
         await academicCalendarService.confirm(id, payload);
-        alert('Calendar exam dates saved and confirmed successfully!');
+        showAlert('Calendar exam dates saved and confirmed successfully!', 'success');
         window.location.reload();
       } catch (err) {
         console.error(err);
-        alert('Failed to save calendar: ' + (err?.response?.data?.detail || err.message));
+        showAlert('Failed to save calendar: ' + (err?.response?.data?.detail || err.message), 'error');
       } finally {
         setLoading(false);
       }
