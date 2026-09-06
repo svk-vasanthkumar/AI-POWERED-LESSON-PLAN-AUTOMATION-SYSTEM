@@ -189,24 +189,23 @@ async def _find_timetable(db, course_oid: ObjectId, timetable_id: str | None = N
     return timetable
 
 
-async def _collect_existing_conflict_sessions(
-    db,
-    course_oid: ObjectId,
-    faculty_id,
-) -> list[dict]:
-    """Gather sessions from other active schedules that could conflict (Phase 8).
+async def _collect_existing_conflict_sessions(db, course_oid, faculty_ids: list | str | None) -> list[dict]:
+    """Gather all currently scheduled sessions for the assigned faculty (for
+    conflict detection), excluding the current course.
 
-    A conflict is any active schedule for the SAME faculty (on a different
-    course). The current course's own schedules are excluded because they will
-    be superseded, not conflicted with.
+    Requires BOTH period-based boundaries AND legacy clock-time strings so the
+    conflict detector in the pure engine can cross-check either timetable type.
     """
     faculty_variants = []
-    if faculty_id is not None:
-        faculty_variants = (
-            _id_variants(faculty_id)
-            if isinstance(faculty_id, ObjectId)
-            else [faculty_id, str(faculty_id)]
-        )
+    if faculty_ids is not None:
+        if isinstance(faculty_ids, str) or isinstance(faculty_ids, ObjectId):
+            faculty_ids = [faculty_ids]
+        for f_id in faculty_ids:
+            faculty_variants.extend(
+                _id_variants(f_id)
+                if isinstance(f_id, ObjectId)
+                else [f_id, str(f_id)]
+            )
 
     if not faculty_variants:
         return []
@@ -244,11 +243,15 @@ def _validate_faculty_relationship(course: dict, timetable: dict) -> None:
     form are treated as equal. When either side has no faculty recorded the
     check is skipped (nothing to contradict).
     """
-    course_faculty = course.get("faculty_id")
+    course_faculty_ids = [str(f) for f in course.get("faculty_ids") or []]
+    if course.get("faculty_id"):
+        course_faculty_ids.append(str(course["faculty_id"]))
+        
     timetable_faculty = timetable.get("faculty_id")
-    if course_faculty is None or timetable_faculty is None:
+    
+    if not course_faculty_ids or timetable_faculty is None:
         return
-    if str(course_faculty) != str(timetable_faculty):
+    if str(timetable_faculty) not in course_faculty_ids:
         raise SchedulerValidationError(
             "Timetable faculty does not match the course's assigned faculty"
         )
@@ -306,6 +309,8 @@ def _calendar_blocked_dates(calendar: dict) -> set:
             "winter_vacation",
             "end_semester_timetable",
             "last_working_day",
+            "holiday",
+            "public_holiday",
         }
         for event in calendar.get("events") or []:
             if not isinstance(event, dict) or event.get("type") not in blocking_types:
@@ -518,13 +523,14 @@ async def generate_schedule(
     sessions, unscheduled = scheduler_engine.allocate_blocks(topics, blocks)
 
     # The faculty owning this schedule comes from the timetable (its faculty_id
-    # reflects who teaches these slots); fall back to the course's faculty_id.
-    faculty_id = timetable.get("faculty_id") or course.get("faculty_id")
+    # reflects who teaches these slots); fall back to the course's faculty_ids.
+    faculty_ids = [timetable.get("faculty_id")] if timetable.get("faculty_id") else course.get("faculty_ids")
+    faculty_id = faculty_ids[0] if faculty_ids else None
 
     # req. 8: conflict detection against existing active schedules of the SAME
     # faculty, on the same date + effective period. Fail before persisting.
     existing_sessions = await _collect_existing_conflict_sessions(
-        db, course_oid, faculty_id
+        db, course_oid, faculty_ids
     )
     conflicts = scheduler_engine.detect_session_conflicts(sessions, existing_sessions)
     if conflicts:
