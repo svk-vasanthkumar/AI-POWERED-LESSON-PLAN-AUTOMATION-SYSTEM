@@ -7,10 +7,12 @@ import { courseService } from '../../services/courseService';
 import { academicCalendarService } from '../../services/academicCalendarService';
 import { timetableService } from '../../services/timetableService';
 import { schedulerService } from '../../services/schedulerService';
+import { useAlert } from '../../context/AlertContext';
 import './LessonPlanCreator.css';
 
 const LessonPlanCreator = () => {
   const navigate = useNavigate();
+  const { showAlert } = useAlert();
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [syllabi, setSyllabi] = useState([]);
@@ -148,7 +150,7 @@ const LessonPlanCreator = () => {
         }
         
       } catch (error) {
-        alert("Failed to generate plan: " + (error.uiMessage || error.message));
+        showAlert("Failed to generate plan: " + (error.uiMessage || error.message), "error");
       } finally {
         setLoading(false);
       }
@@ -191,7 +193,7 @@ const LessonPlanCreator = () => {
       link.click();
       link.parentNode.removeChild(link);
     } catch (error) {
-      alert("Failed to export: " + (error.uiMessage || error.message));
+      showAlert("Failed to export: " + (error.uiMessage || error.message), "error");
     } finally {
       setLoading(false);
     }
