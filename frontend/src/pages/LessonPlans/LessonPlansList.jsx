@@ -3,10 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Edit2, Download, Trash2, Search, FileText } from 'lucide-react';
 import { lessonPlanService } from '../../services/lessonPlanService';
 import { courseService } from '../../services/courseService';
+import { useAlert } from '../../context/AlertContext';
 import './LessonPlansList.css';
 
 const LessonPlansList = () => {
   const navigate = useNavigate();
+  const { showAlert } = useAlert();
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -47,7 +49,7 @@ const LessonPlansList = () => {
         await lessonPlanService.delete(id);
         fetchPlans();
       } catch (error) {
-        alert("Failed to delete lesson plan: " + (error.uiMessage || error.message || "Unknown error"));
+        showAlert("Failed to delete lesson plan: " + (error.uiMessage || error.message || "Unknown error"), "error");
       }
     }
   };
@@ -109,7 +111,7 @@ const LessonPlansList = () => {
               </tr>
             ) : (
               filteredPlans.map(plan => (
-                <tr key={plan._id}>
+                <tr key={plan._id || plan.id}>
                   <td className="font-medium">{plan.course_name || 'N/A'}</td>
                   <td>{plan.course_code || 'N/A'}</td>
                   <td>Sem {plan.semester || '-'}</td>
@@ -124,14 +126,14 @@ const LessonPlansList = () => {
                       <button 
                         className="btn-icon text-accent" 
                         title="Edit Plan"
-                        onClick={() => navigate(`/lesson-plans/${plan._id}`)}
+                        onClick={() => navigate(`/lesson-plans/${plan._id || plan.id}`)}
                       >
                         <Edit2 size={16} />
                       </button>
                       <button 
                         className="btn-icon text-error" 
                         title="Delete Plan"
-                        onClick={() => handleDelete(plan._id || plan.lesson_plan_id)}
+                        onClick={() => handleDelete(plan._id || plan.id)}
                       >
                         <Trash2 size={16} />
                       </button>

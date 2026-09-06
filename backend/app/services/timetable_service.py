@@ -17,6 +17,7 @@ from app.database.mongodb import get_database
 from app.models.timetable_model import create_timetable_document
 from app.utils.object_id import to_object_id
 from app.utils.timetable_periods import periods_overlap
+import asyncio
 
 
 class TimetableInUseError(Exception):
@@ -125,7 +126,7 @@ async def _check_faculty_period_overlap(
     if not new_slots:
         return
 
-    query = {"faculty_id": faculty_oid}
+    query = {"faculty_id": faculty_oid, "status": "VERIFIED"}
     if exclude_id is not None:
         query["_id"] = {"$ne": exclude_id}
 
@@ -276,13 +277,16 @@ async def update_timetable(timetable_id: str, data):
             )
         updates["schedule"] = [item.model_dump() for item in data.schedule]
 
+    if getattr(data, "status", None) is not None:
+        updates["status"] = data.status
+
     if not updates:
         return 0
 
     updates["updated_at"] = datetime.now(UTC)
 
     result = await db.timetables.update_one({"_id": obj_id}, {"$set": updates})
-    return result.modified_count
+    return result.matched_count
 
 
 async def delete_timetable(timetable_id: str):
@@ -303,9 +307,49 @@ async def delete_timetable(timetable_id: str):
     if existing is None:
         return 0
 
-    dependencies = await _count_timetable_dependencies(db, obj_id)
-    if dependencies:
-        raise TimetableInUseError(dependencies)
+    # Cascade delete any dependent generated schedules
+    variants = _id_variants(obj_id)
+    await db.generated_schedules.delete_many({"timetable_id": {"$in": variants}})
 
     result = await db.timetables.delete_one({"_id": obj_id})
     return result.deleted_count
+
+
+async def process_timetable_ocr(timetable_id: str, filepath: str):
+    from app.services.timetable_cv_parser import TimetableOCR, OCRConfig
+    import logging
+    logger = logging.getLogger(__name__)
+
+    db = get_database()
+    try:
+        obj_id = ObjectId(timetable_id)
+    except InvalidId:
+        return
+
+    try:
+        # Run CV-based parsing asynchronously in a thread
+        def run_cv_parser():
+            config = OCRConfig()
+            pipeline = TimetableOCR(config)
+            return pipeline.process_to_schema(filepath)
+
+        slots = await asyncio.to_thread(run_cv_parser)
+
+        await db.timetables.update_one(
+            {"_id": obj_id},
+            {"$set": {
+                "status": "DRAFT",
+                "schedule": slots,
+                "raw_text": "Parsed using CV Geometry Pipeline",
+                "updated_at": datetime.now(UTC)
+            }}
+        )
+    except Exception as e:
+        logger.exception("Timetable OCR failed")
+        await db.timetables.update_one(
+            {"_id": obj_id},
+            {"$set": {
+                "status": "REJECTED",
+                "updated_at": datetime.now(UTC)
+            }}
+        )

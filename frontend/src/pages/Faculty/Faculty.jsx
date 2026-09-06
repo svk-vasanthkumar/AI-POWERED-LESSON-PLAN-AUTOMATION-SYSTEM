@@ -2,10 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { Users, Plus, X, Edit, Trash2, AlertCircle, Mail } from 'lucide-react';
 import { facultyService } from '../../services/facultyService';
 import { useAuth } from '../../context/AuthContext';
+import { useAlert } from '../../context/AlertContext';
 import './Faculty.css';
 
 const Faculty = () => {
   const { user } = useAuth();
+  const { showAlert } = useAlert();
   const [faculty, setFaculty] = useState([]);
   const [loading, setLoading] = useState(true);
   
@@ -85,7 +87,7 @@ const Faculty = () => {
         await facultyService.delete(id);
         await fetchData();
       } catch (err) {
-        alert(err.uiMessage || 'Failed to delete faculty member.');
+        showAlert(err.uiMessage || 'Failed to delete faculty member.', 'error');
       }
     }
   };
@@ -99,11 +101,15 @@ const Faculty = () => {
       if (isEditing) {
         // Only send fields that can be updated according to schema
         const updateData = {
+          faculty_id: formData.faculty_id,
           name: formData.name,
           email: formData.email,
           department: formData.department,
           designation: formData.designation
         };
+        if (formData.password && formData.password.trim() !== '') {
+          updateData.password = formData.password;
+        }
         await facultyService.update(currentFacultyId, updateData);
       } else {
         await facultyService.create(formData);
@@ -134,17 +140,17 @@ const Faculty = () => {
   const confirmSendEmail = async (e) => {
     e.preventDefault();
     if (!emailPassword || emailPassword.length < 6) {
-      alert("Please enter a valid password (min 6 characters).");
+      showAlert("Please enter a valid password (min 6 characters).", 'warning');
       return;
     }
     
     setSendingEmail(true);
     try {
       await facultyService.sendEmail(selectedFacultyForEmail._id || selectedFacultyForEmail.id, emailPassword);
-      alert('Welcome email sent successfully!');
+      showAlert('Welcome email sent successfully!', 'success');
       setShowEmailModal(false);
     } catch (err) {
-      alert(err.uiMessage || 'Failed to send email. Please try again.');
+      showAlert(err.uiMessage || 'Failed to send email. Please try again.', 'error');
     } finally {
       setSendingEmail(false);
     }
@@ -253,13 +259,11 @@ const Faculty = () => {
                       onChange={handleChange}
                       placeholder="e.g. FAC001"
                       required
-                      disabled={isEditing}
                       minLength={6}
                       maxLength={6}
                       pattern=".{6}"
                       title="Faculty ID must be exactly 6 characters"
                     />
-                    {isEditing && <small className="text-secondary mt-1">Faculty ID cannot be changed.</small>}
                   </div>
                   <div className="form-group mb-4" style={{ flex: 2 }}>
                     <label className="form-label">Full Name</label>
@@ -289,21 +293,19 @@ const Faculty = () => {
                       required
                     />
                   </div>
-                  {!isEditing && (
                     <div className="form-group mb-4" style={{ flex: 1 }}>
-                      <label className="form-label">Temporary Password</label>
+                      <label className="form-label">{isEditing ? 'New Password (Optional)' : 'Temporary Password'}</label>
                       <input 
                         type="password" 
                         className="form-control" 
                         name="password"
-                        value={formData.password}
+                        value={formData.password || ''}
                         onChange={handleChange}
-                        placeholder="Assign an initial password"
+                        placeholder={isEditing ? 'Leave blank to keep current' : 'Assign an initial password'}
                         required={!isEditing}
                         minLength={6}
                       />
                     </div>
-                  )}
                 </div>
 
                 <div className="form-row" style={{ display: 'flex', gap: '1rem' }}>

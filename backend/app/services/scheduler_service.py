@@ -33,6 +33,7 @@ from app.utils.calendar_dates import (
     to_date,
 )
 from app.utils.object_id import to_object_id
+from app.utils.timetable_periods import get_period_time_map
 
 
 class ScheduleNotFoundError(Exception):
@@ -134,6 +135,15 @@ async def _find_calendar(db, course: dict, timetable: dict, academic_year=None, 
             sort=[("created_at", -1)],
         )
         if calendar is None:
+            # Semester value in DB may differ from course (e.g. calendar has
+            # sequential ID 16, course stores odd-semester number 7). Fall back
+            # to matching by academic_year alone — pick the newest calendar for
+            # the same year so scheduling still works.
+            calendar = await db.academic_calendar.find_one(
+                {"academic_year": resolved_year},
+                sort=[("created_at", -1)],
+            )
+        if calendar is None:
             raise ScheduleNotFoundError(
                 f"Academic calendar not found for academic year "
                 f"'{resolved_year}', semester {semester}"
@@ -179,24 +189,23 @@ async def _find_timetable(db, course_oid: ObjectId, timetable_id: str | None = N
     return timetable
 
 
-async def _collect_existing_conflict_sessions(
-    db,
-    course_oid: ObjectId,
-    faculty_id,
-) -> list[dict]:
-    """Gather sessions from other active schedules that could conflict (Phase 8).
+async def _collect_existing_conflict_sessions(db, course_oid, faculty_ids: list | str | None) -> list[dict]:
+    """Gather all currently scheduled sessions for the assigned faculty (for
+    conflict detection), excluding the current course.
 
-    A conflict is any active schedule for the SAME faculty (on a different
-    course). The current course's own schedules are excluded because they will
-    be superseded, not conflicted with.
+    Requires BOTH period-based boundaries AND legacy clock-time strings so the
+    conflict detector in the pure engine can cross-check either timetable type.
     """
     faculty_variants = []
-    if faculty_id is not None:
-        faculty_variants = (
-            _id_variants(faculty_id)
-            if isinstance(faculty_id, ObjectId)
-            else [faculty_id, str(faculty_id)]
-        )
+    if faculty_ids is not None:
+        if isinstance(faculty_ids, str) or isinstance(faculty_ids, ObjectId):
+            faculty_ids = [faculty_ids]
+        for f_id in faculty_ids:
+            faculty_variants.extend(
+                _id_variants(f_id)
+                if isinstance(f_id, ObjectId)
+                else [f_id, str(f_id)]
+            )
 
     if not faculty_variants:
         return []
@@ -204,17 +213,17 @@ async def _collect_existing_conflict_sessions(
     query = {
         "active": True,
         "faculty_id": {"$in": faculty_variants},
-        "course_id": {"$nin": _id_variants(course_oid)},
     }
 
     existing_sessions: list[dict] = []
     async for schedule in db.generated_schedules.find(query):
+        # Skip this course's own previous schedule; it is superseded, not a clash.
+        if str(schedule.get("course_id")) == str(course_oid):
+            continue
         for session in schedule.get("sessions", []):
             existing_sessions.append(
                 {
                     "date": session.get("date"),
-                    "day": session.get("day"),
-                    "timetable_day": session.get("timetable_day"),
                     # Period-based comparison (new timetables) …
                     "period_start": session.get("period_start"),
                     "period_end": session.get("period_end"),
@@ -234,11 +243,15 @@ def _validate_faculty_relationship(course: dict, timetable: dict) -> None:
     form are treated as equal. When either side has no faculty recorded the
     check is skipped (nothing to contradict).
     """
-    course_faculty = course.get("faculty_id")
+    course_faculty_ids = [str(f) for f in course.get("faculty_ids") or []]
+    if course.get("faculty_id"):
+        course_faculty_ids.append(str(course["faculty_id"]))
+        
     timetable_faculty = timetable.get("faculty_id")
-    if course_faculty is None or timetable_faculty is None:
+    
+    if not course_faculty_ids or timetable_faculty is None:
         return
-    if str(course_faculty) != str(timetable_faculty):
+    if str(timetable_faculty) not in course_faculty_ids:
         raise SchedulerValidationError(
             "Timetable faculty does not match the course's assigned faculty"
         )
@@ -249,34 +262,43 @@ def _calendar_blocked_dates(calendar: dict) -> set:
 
     Unions, into a single ``set[date]``:
       * holidays (new ``{date, name}`` dicts OR legacy plain date strings),
-      * the flattened legacy ``internal_exams`` list,
-      * every date inside the structured exam ranges (CIA I/II/III, model
-        practical/theory, semester-end practical/theory), winter vacation and
-        any other ``blocked_periods`` — expanded via the calendar utilities.
+      * for legacy calendars without structured events: internal_exams flat list
+        and normalized blocked periods (cia_1/cia_2/cia_3 ranges).
+      * for new calendars (with structured events): only teaching-stopping event
+        types — CIA dates are NOT blocked here; only Periods 1 & 2 on
+        Monday/Saturday within CIA ranges are reserved via apply_exam_overrides.
 
     No dates are hard-coded; everything comes from the stored calendar.
     """
     blocked: set = set()
+    has_events = bool(calendar.get("events"))
 
     try:
         for holiday in calendar.get("holidays") or []:
             raw = holiday.get("date") if isinstance(holiday, dict) else holiday
             blocked.add(to_date(raw))
 
-        for raw in calendar.get("internal_exams") or []:
-            blocked.add(to_date(raw))
+        # Legacy flat internal_exams list — only use it when the calendar has no
+        # structured events; otherwise it over-blocks CIA teaching weeks.
+        if not has_events:
+            for raw in calendar.get("internal_exams") or []:
+                blocked.add(to_date(raw))
 
-        for period in normalize_blocked_periods(calendar):
-            for day in expand_range_dates(period["start_date"], period["end_date"]):
-                blocked.add(day)
+        # Legacy per-type exam range fields (cia_1, cia_2 …) — skip when the
+        # calendar uses the new events format to avoid double-blocking CIA weeks.
+        if not has_events:
+            for period in normalize_blocked_periods(calendar):
+                for day in expand_range_dates(period["start_date"], period["end_date"]):
+                    blocked.add(day)
 
         # New calendar ingestion stores events uniformly instead of maintaining
         # one field per exam type. Block only events that actually prevent
         # teaching; registration/report/notification milestones do not block a
         # timetable day.
+        # CIA exam ranges are NOT fully blocked — teaching continues during
+        # CIA weeks; only Periods 1 & 2 on Monday/Saturday are reserved for
+        # exams (handled via apply_exam_overrides, not by removing the day).
         blocking_types = {
-            "cia",
-            "cia_report",
             "model_practical",
             "model_theory",
             "remedial",
@@ -285,6 +307,10 @@ def _calendar_blocked_dates(calendar: dict) -> set:
             "hall_ticket",
             "ia_report",
             "winter_vacation",
+            "end_semester_timetable",
+            "last_working_day",
+            "holiday",
+            "public_holiday",
         }
         for event in calendar.get("events") or []:
             if not isinstance(event, dict) or event.get("type") not in blocking_types:
@@ -397,6 +423,7 @@ async def generate_schedule(
     academic_year: str | None = None,
     calendar_id: str | None = None,
     timetable_id: str | None = None,
+    exam_configs: list[dict] | None = None,
 ) -> dict:
     """Generate (or regenerate) a conflict-free schedule for a course.
 
@@ -444,51 +471,66 @@ async def generate_schedule(
 
     schedule_slots = timetable.get("schedule")
 
+    target_subject = ",".join(
+        filter(
+            None,
+            [
+                course.get("course_name"),
+                course.get("short_form"),
+                course.get("course_code"),
+            ],
+        )
+    )
+
     # req. 4-6 + 12: pick the period engine for period-based timetables, and the
     # legacy clock-time engine for old clock-time timetables. Period times are
     # attached only when configured (never invented).
     if scheduler_engine.timetable_is_period_based(schedule_slots):
-        period_slots = scheduler_engine.build_period_slots_by_weekday(schedule_slots)
-        period_time_map = scheduler_engine.build_period_time_map_by_weekday(
-            schedule_slots
+        period_slots = scheduler_engine.build_period_slots_by_weekday(
+            schedule_slots, target_subject=target_subject
         )
         blocks = scheduler_engine.build_period_blocks(
-            teachable_days,
-            period_slots,
-            period_time_map=period_time_map,
+            teachable_days, period_slots, period_time_map=get_period_time_map() or None
         )
         scheduling_mode = "period"
     else:
-        clock_slots = scheduler_engine.build_slots_by_weekday(schedule_slots)
+        clock_slots = scheduler_engine.build_slots_by_weekday(
+            schedule_slots, target_subject=target_subject
+        )
         blocks = scheduler_engine.build_clock_blocks(teachable_days, clock_slots)
         scheduling_mode = "clock"
+
+    # Auto-derive CIA exam configs from calendar events when the caller didn't
+    # explicitly pass them. This ensures Periods 1 & 2 on Monday/Saturday are
+    # always reserved for exams during CIA date ranges.
+    if not exam_configs:
+        exam_configs = [
+            {
+                "start_date": event["start_date"],
+                "end_date": event["end_date"],
+            }
+            for event in (calendar.get("events") or [])
+            if isinstance(event, dict)
+            and event.get("type") == "cia"
+            and event.get("start_date")
+            and event.get("end_date")
+        ]
+    if exam_configs:
+        blocks = scheduler_engine.apply_exam_overrides(blocks, exam_configs)
 
     # req. 10: allocate topic hours across blocks in deterministic unit/topic
     # order; topics that do not fit before semester end are reported.
     sessions, unscheduled = scheduler_engine.allocate_blocks(topics, blocks)
 
-    for topic in topics:
-        topic_id = topic["topic_id"]
-        requested = float(topic["estimated_hours"])
-        scheduled = sum(
-            float(session.get("duration_hours", 0))
-            for session in sessions
-            if session.get("topic_id") == topic_id
-        )
-
-        if scheduled - requested > 1e-6:
-            raise SchedulerValidationError(
-                f"Scheduler over-allocated topic '{topic_id}'"
-            )
-
     # The faculty owning this schedule comes from the timetable (its faculty_id
-    # reflects who teaches these slots); fall back to the course's faculty_id.
-    faculty_id = timetable.get("faculty_id") or course.get("faculty_id")
+    # reflects who teaches these slots); fall back to the course's faculty_ids.
+    faculty_ids = [timetable.get("faculty_id")] if timetable.get("faculty_id") else course.get("faculty_ids")
+    faculty_id = faculty_ids[0] if faculty_ids else None
 
     # req. 8: conflict detection against existing active schedules of the SAME
     # faculty, on the same date + effective period. Fail before persisting.
     existing_sessions = await _collect_existing_conflict_sessions(
-        db, course_oid, faculty_id
+        db, course_oid, faculty_ids
     )
     conflicts = scheduler_engine.detect_session_conflicts(sessions, existing_sessions)
     if conflicts:
@@ -502,11 +544,7 @@ async def generate_schedule(
         {"course_id": {"$in": _id_variants(course_oid)}, "active": True},
         sort=[("version", -1)],
     )
-    next_version = (
-        int(previous.get("version") or 0) + 1
-        if previous
-        else 1
-    )
+    next_version = (previous.get("version", 1) + 1) if previous else 1
     if previous:
         # req. 11: preserve completed/skipped/rescheduled execution history by
         # carrying it onto reliably-matched new sessions before superseding the

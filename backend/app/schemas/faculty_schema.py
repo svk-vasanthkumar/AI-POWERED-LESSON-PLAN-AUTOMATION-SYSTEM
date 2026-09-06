@@ -17,6 +17,7 @@ class FacultyUpdate(BaseModel):
     email: Optional[EmailStr] = None
     department: Optional[str] = None
     designation: Optional[str] = None
+    password: Optional[str] = Field(None, min_length=6)
 
 
 class EmailCredentials(BaseModel):

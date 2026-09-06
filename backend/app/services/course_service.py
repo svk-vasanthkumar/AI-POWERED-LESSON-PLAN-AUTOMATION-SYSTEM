@@ -57,9 +57,8 @@ def _id_variants(value) -> list:
 def _serialize(doc: dict) -> dict:
     """Make a course document JSON-serializable.
 
-    Stringifies ``_id`` and the ``faculty_id`` reference when stored as a native
-    ObjectId (new records). Legacy string references pass through unchanged so
-    old documents stay readable.
+    Stringifies ``_id`` and the ``faculty_id`` / ``faculty_ids`` references.
+    Legacy string references pass through unchanged so old documents stay readable.
     """
     if doc is None:
         return doc
@@ -68,24 +67,26 @@ def _serialize(doc: dict) -> dict:
         doc["_id"] = str(doc["_id"])
     if isinstance(doc.get("faculty_id"), ObjectId):
         doc["faculty_id"] = str(doc["faculty_id"])
+    if "faculty_ids" in doc:
+        doc["faculty_ids"] = [str(fid) if isinstance(fid, ObjectId) else fid for fid in doc["faculty_ids"]]
     return doc
 
 
 async def create_course(data):
     db = get_database()
 
-    # Validate & convert the faculty reference via the shared helper
-    faculty_oid = to_object_id(data.faculty_id, field="faculty_id")
+    if not data.faculty_ids:
+        raise ValueError("At least one faculty member must be assigned")
 
-    # Ensure faculty profile exists
-    faculty = await db.faculty.find_one({"_id": faculty_oid})
+    faculty_oids = [to_object_id(fid, field="faculty_ids") for fid in data.faculty_ids]
+    
+    faculties = await db.faculty.find({"_id": {"$in": faculty_oids}}).to_list(None)
+    if len(faculties) != len(faculty_oids):
+        raise ValueError("One or more faculty members not found")
 
-    if not faculty:
-        raise ValueError("Faculty not found")
-
-    # Validate department match between course and faculty
-    if faculty["department"].strip().lower() != data.department.strip().lower():
-        raise ValueError("Course department must match faculty department")
+    for faculty in faculties:
+        if faculty["department"].strip().lower() != data.department.strip().lower():
+            raise ValueError("Course department must match faculty department")
 
     # Prevent duplicate course code
     existing_course = await db.courses.find_one(
@@ -101,8 +102,9 @@ async def create_course(data):
         department=data.department,
         semester=data.semester,
         credits=data.credits,
-        faculty_id=faculty_oid,
+        faculty_ids=faculty_oids,
         academic_year=data.academic_year,
+        short_form=data.short_form,
     )
 
     try:
@@ -110,14 +112,15 @@ async def create_course(data):
     except DuplicateKeyError:
         raise ValueError("Course already exists")
 
-    # Fetch user_id for the faculty to send a notification
-    if faculty and "user_id" in faculty:
-        await create_notification(
-            user_id=str(faculty["user_id"]),
-            title="New Course Assigned",
-            message=f"You have been assigned to teach {data.course_name} ({data.course_code}).",
-            type="info"
-        )
+    # Fetch user_id for the faculties to send a notification
+    for faculty in faculties:
+        if "user_id" in faculty:
+            await create_notification(
+                user_id=str(faculty["user_id"]),
+                title="New Course Assigned",
+                message=f"You have been assigned to teach {data.course_name} ({data.course_code}).",
+                type="info"
+            )
 
     return str(result.inserted_id)
 
@@ -156,12 +159,13 @@ async def get_course(course_id: str):
 
 async def update_course(course_id: str, data):
     """Apply an update to a course.
-
-    ``course_code`` is intentionally NOT part of ``CourseUpdate`` so the unique
-    index on ``courses.course_code`` can never be bypassed by an update. The
-    ``faculty_id`` reference is validated (existence + ObjectId normalization)
-    so the relationship stays consistent.
+    
+    The ``faculty_id`` reference is validated (existence + ObjectId normalization)
+    so the relationship stays consistent. Updates may change the ``course_code``
+    provided it does not violate the (course_code, academic_year) unique constraint.
     """
+    from pymongo.errors import DuplicateKeyError
+    
     db = get_database()
     course_oid = to_object_id(course_id, field="course_id")
 
@@ -169,26 +173,35 @@ async def update_course(course_id: str, data):
     if existing is None:
         return 0
 
-    faculty_oid = to_object_id(data.faculty_id, field="faculty_id")
-    faculty = await db.faculty.find_one({"_id": faculty_oid})
-    if not faculty:
-        raise ValueError("Faculty not found")
+    if not data.faculty_ids:
+        raise ValueError("At least one faculty member must be assigned")
 
-    if faculty["department"].strip().lower() != data.department.strip().lower():
-        raise ValueError("Course department must match faculty department")
+    faculty_oids = [to_object_id(fid, field="faculty_ids") for fid in data.faculty_ids]
+    faculties = await db.faculty.find({"_id": {"$in": faculty_oids}}).to_list(None)
+    if len(faculties) != len(faculty_oids):
+        raise ValueError("One or more faculty members not found")
+
+    for faculty in faculties:
+        if faculty["department"].strip().lower() != data.department.strip().lower():
+            raise ValueError("Course department must match faculty department")
 
     updates = {
+        "course_code": data.course_code.upper(),
         "course_name": data.course_name,
         "department": data.department,
         "semester": data.semester,
         "credits": data.credits,
-        "faculty_id": faculty["_id"],
+        "faculty_ids": faculty_oids,
         "academic_year": data.academic_year,
+        "short_form": data.short_form,
         "updated_at": datetime.now(UTC),
     }
 
-    result = await db.courses.update_one({"_id": course_oid}, {"$set": updates})
-    return 1 if result.matched_count else 0
+    try:
+        result = await db.courses.update_one({"_id": course_oid}, {"$set": updates})
+        return 1 if result.matched_count else 0
+    except DuplicateKeyError:
+        raise ValueError("Another course already uses this course code for the selected academic year")
 
 
 async def _count_course_dependencies(db, course_oid) -> dict[str, int]:
@@ -226,20 +239,24 @@ async def delete_course(course_id: str) -> int:
     return result.deleted_count
 
 
-async def clone_course(course_id: str, new_faculty_id: str, new_academic_year: str) -> str:
+async def clone_course(course_id: str, new_faculty_ids: list[str], new_academic_year: str) -> str:
     """Clone a course along with its associated syllabus and lesson plan."""
     db = get_database()
     course_oid = to_object_id(course_id, field="course_id")
-    faculty_oid = to_object_id(new_faculty_id, field="new_faculty_id")
+    
+    if not new_faculty_ids:
+        raise ValueError("At least one faculty member must be assigned")
+
+    faculty_oids = [to_object_id(fid, field="new_faculty_ids") for fid in new_faculty_ids]
 
     # 1. Clone Course
     course = await db.courses.find_one({"_id": course_oid})
     if not course:
         raise ValueError("Original course not found")
         
-    faculty = await db.faculty.find_one({"_id": faculty_oid})
-    if not faculty:
-        raise ValueError("New faculty not found")
+    faculties = await db.faculty.find({"_id": {"$in": faculty_oids}}).to_list(None)
+    if len(faculties) != len(faculty_oids):
+        raise ValueError("One or more new faculty not found")
 
     new_course = create_course_document(
         course_code=course["course_code"],
@@ -247,7 +264,7 @@ async def clone_course(course_id: str, new_faculty_id: str, new_academic_year: s
         department=course["department"],
         semester=course["semester"],  # Keeps same semester
         credits=course["credits"],
-        faculty_id=faculty_oid,
+        faculty_ids=faculty_oids,
         academic_year=new_academic_year,
     )
     result = await db.courses.insert_one(new_course)
@@ -271,7 +288,6 @@ async def clone_course(course_id: str, new_faculty_id: str, new_academic_year: s
         s_result = await db.syllabi.insert_one(new_syllabus)
         new_syllabus_id = s_result.inserted_id
 
-    # 3. Clone Lesson Plan (latest one)
     if new_syllabus_id:
         lesson_plan = await db.lesson_plans.find_one(
             {"course_id": course_oid}, sort=[("created_at", -1)]
@@ -286,12 +302,13 @@ async def clone_course(course_id: str, new_faculty_id: str, new_academic_year: s
             )
             await db.lesson_plans.insert_one(new_lp)
             
-    if faculty and "user_id" in faculty:
-        await create_notification(
-            user_id=str(faculty["user_id"]),
-            title="Course Reassigned",
-            message=f"You have been assigned to teach {course['course_name']} ({course['course_code']}) for the {new_academic_year} academic year.",
-            type="info"
-        )
+    for faculty in faculties:
+        if "user_id" in faculty:
+            await create_notification(
+                user_id=str(faculty["user_id"]),
+                title="Course Reassigned",
+                message=f"You have been assigned to teach {course['course_name']} ({course['course_code']}) for the {new_academic_year} academic year.",
+                type="info"
+            )
             
     return str(new_course_id)

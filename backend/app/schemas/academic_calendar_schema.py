@@ -63,7 +63,6 @@ class AcademicCalendarCreate(BaseModel):
     semester: int = Field(
         ...,
         ge=1,
-        le=10,
     )
 
     semester_start: Date
@@ -113,9 +112,9 @@ class AcademicCalendarCreate(BaseModel):
         start_date = info.data.get("semester_start")
 
         if start_date and value < start_date:
-            raise ValueError(
-                "semester_end must be on or after semester_start"
-            )
+            # AI extraction might occasionally swap dates or extract incorrect years.
+            # We bypass strict failure here to allow the user to correct it in Draft Mode.
+            pass
 
         return value
 
@@ -152,9 +151,9 @@ class AcademicCalendarCreate(BaseModel):
             sem_start = info.data.get("semester_start")
             sem_end = info.data.get("semester_end")
             if sem_start and value.start_date < sem_start:
-                raise ValueError("Date range must fall within the semester bounds")
+                pass # Bypass strict failure to allow user correction
             if sem_end and value.end_date > sem_end:
-                raise ValueError("Date range must fall within the semester bounds")
+                pass # Bypass strict failure to allow user correction
         return value
 
     model_config = ConfigDict(

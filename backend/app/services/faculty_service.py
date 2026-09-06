@@ -5,6 +5,7 @@ from pymongo.errors import DuplicateKeyError
 
 from app.database.mongodb import get_database
 from app.models.faculty_model import create_faculty_document
+from app.auth.password import hash_password
 
 
 class FacultyInUseError(Exception):
@@ -178,6 +179,8 @@ async def update_faculty(faculty_id: str, data):
     if not faculty:
         return 0
 
+    password = update_data.pop("password", None)
+
     if "faculty_id" in update_data:
         existing = await db.faculty.find_one({"faculty_id": update_data["faculty_id"], "_id": {"$ne": obj_id}})
         if existing:
@@ -196,6 +199,36 @@ async def update_faculty(faculty_id: str, data):
                     {"_id": ObjectId(faculty["user_id"])},
                     {"$set": {"email": update_data["email"], "updated_at": datetime.now(UTC)}}
                 )
+
+    if password:
+        hashed_password = hash_password(password)
+        if faculty.get("user_id"):
+            await db.users.update_one(
+                {"_id": ObjectId(faculty["user_id"])},
+                {"$set": {"password": hashed_password, "updated_at": datetime.now(UTC)}}
+            )
+        else:
+            from app.models.user_model import create_user_document
+            email = update_data.get("email", faculty.get("email"))
+            name = update_data.get("name", faculty.get("name"))
+            dept = update_data.get("department", faculty.get("department"))
+            
+            user_document = create_user_document(
+                name=name,
+                email=email,
+                password=hashed_password,
+                role="faculty",
+                department=dept,
+            )
+            try:
+                user_result = await db.users.insert_one(user_document)
+                update_data["user_id"] = str(user_result.inserted_id)
+            except DuplicateKeyError:
+                raise ValueError("Email already in use by another user")
+
+    # In case update_data is empty after popping password
+    if not update_data:
+        return 1
 
     update_data["updated_at"] = datetime.now(UTC)
 

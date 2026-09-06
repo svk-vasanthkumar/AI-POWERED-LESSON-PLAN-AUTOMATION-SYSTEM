@@ -1,17 +1,19 @@
 import api from './api';
 
 export const schedulerService = {
-  generateSchedule: async (courseId, calendarId = null, timetableId = null) => {
+  generateSchedule: async (courseId, calendarId = null, timetableId = null, examConfigs = null) => {
     let url = `/scheduler/${courseId}`;
     const params = new URLSearchParams();
     if (calendarId) params.append('calendar_id', calendarId);
     if (timetableId) params.append('timetable_id', timetableId);
     
-    if (params.toString()) {
-      url += `?${params.toString()}`;
+    const queryString = params.toString();
+    if (queryString) {
+      url += `?${queryString}`;
     }
     
-    const response = await api.post(url);
+    const payload = examConfigs ? { exam_configs: examConfigs } : {};
+    const response = await api.post(url, payload);
     return response.data;
   },
   
