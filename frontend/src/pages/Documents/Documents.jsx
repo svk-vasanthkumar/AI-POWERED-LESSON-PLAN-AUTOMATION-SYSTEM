@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useAlert } from '../../context/AlertContext';
 import UploadCard from '../../components/common/UploadCard';
 import { syllabusService } from '../../services/syllabusService';
 import { academicCalendarService } from '../../services/academicCalendarService';
@@ -10,6 +11,7 @@ import './Documents.css';
 
 const Documents = () => {
   const { user } = useAuth();
+  const { showAlert } = useAlert();
   const [documents, setDocuments] = useState({ syllabi: [], calendars: [], timetables: [] });
   const [courses, setCourses] = useState([]);
   const [selectedCourse, setSelectedCourse] = useState("");
@@ -119,7 +121,7 @@ const Documents = () => {
 
         fetchAllDocuments();
       } catch (error) {
-        alert("Failed to delete document: " + (error.uiMessage || error.message));
+        showAlert("Failed to delete document: " + (error.uiMessage || error.message), "error");
       }
     }
   };
@@ -158,7 +160,7 @@ const Documents = () => {
               acceptedFormats=".pdf"
               onUpload={(file) => {
                 if (!selectedCourse) {
-                  alert("Please select a course first.");
+                  showAlert("Please select a course first.", "warning");
                   return;
                 }
                 handleUpload('syllabus', file, syllabusService.upload);
@@ -188,7 +190,7 @@ const Documents = () => {
               acceptedFormats=".pdf,.csv,.png,.jpg"
               onUpload={(file) => {
                 if (!selectedCourse) {
-                  alert("Please select a course first.");
+                  showAlert("Please select a course first.", "warning");
                   return;
                 }
                 const course = courses.find(c => (c._id || c.id) === selectedCourse);
