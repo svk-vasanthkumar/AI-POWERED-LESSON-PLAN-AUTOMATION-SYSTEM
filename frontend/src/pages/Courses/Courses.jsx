@@ -14,22 +14,12 @@ const Courses = () => {
   const [selectedAcademicYear, setSelectedAcademicYear] = useState('All');
   const [selectedFaculty, setSelectedFaculty] = useState('All');
   
-  // Modal state
   const [showModal, setShowModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [courseToEditId, setCourseToEditId] = useState(null);
-  const [showCloneModal, setShowCloneModal] = useState(false);
-  const [courseToClone, setCourseToClone] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   
-  // Clone Form state
-  const [cloneData, setCloneData] = useState({
-    new_faculty_id: '',
-    new_academic_year: '2027-2028',
-  });
-  
-  // Form state
   const [formData, setFormData] = useState({
     course_code: '',
     course_name: '',
@@ -37,8 +27,9 @@ const Courses = () => {
     semester: 1,
     credits: 3,
     academic_year: '2026-2027',
-    faculty_id: user?.id || user?._id || '',
-    short_form: ''
+    faculty_ids: user?.id || user?._id ? [user.id || user._id] : [],
+    short_form: '',
+    duplicate_course: false
   });
 
   const fetchData = async () => {
@@ -62,7 +53,7 @@ const Courses = () => {
   }, []);
 
   const handleChange = (e) => {
-    const value = e.target.type === 'number' ? parseInt(e.target.value) : e.target.value;
+    const value = e.target.type === 'checkbox' ? e.target.checked : (e.target.type === 'number' ? parseInt(e.target.value) : e.target.value);
     setFormData({
       ...formData,
       [e.target.name]: value
@@ -79,14 +70,15 @@ const Courses = () => {
       semester: 1,
       credits: 3,
       academic_year: '2026-2027',
-      faculty_id: user?.id || user?._id || '',
-      short_form: ''
+      faculty_ids: user?.id || user?._id ? [user.id || user._id] : [],
+      short_form: '',
+      duplicate_course: false
     });
     setError('');
     setShowModal(true);
   };
 
-  const openEditModal = (course) => {
+  const openEditModal = (course, duplicate = false) => {
     setIsEditing(true);
     setCourseToEditId(course._id || course.id);
     setFormData({
@@ -95,9 +87,10 @@ const Courses = () => {
       department: course.department,
       semester: course.semester,
       credits: course.credits,
-      academic_year: course.academic_year || '2026-2027',
-      faculty_id: course.faculty_id,
-      short_form: course.short_form || ''
+      academic_year: duplicate ? '2027-2028' : (course.academic_year || '2026-2027'),
+      faculty_ids: course.faculty_ids || (course.faculty_id ? [course.faculty_id] : []),
+      short_form: course.short_form || '',
+      duplicate_course: duplicate
     });
     setError('');
     setShowModal(true);
@@ -110,9 +103,21 @@ const Courses = () => {
     
     try {
       if (isEditing) {
-        const updateData = { ...formData };
-        delete updateData.course_code; // Immutable after creation
-        await courseService.update(courseToEditId, updateData);
+        if (formData.duplicate_course) {
+          if (!formData.faculty_ids || formData.faculty_ids.length === 0) {
+            setError('Please select at least one faculty member');
+            setSaving(false);
+            return;
+          }
+          await courseService.clone(courseToEditId, {
+            new_faculty_ids: formData.faculty_ids,
+            new_academic_year: formData.academic_year
+          });
+        } else {
+          const updateData = { ...formData };
+          delete updateData.duplicate_course;
+          await courseService.update(courseToEditId, updateData);
+        }
       } else {
         await courseService.create(formData);
       }
@@ -126,30 +131,7 @@ const Courses = () => {
     }
   };
 
-  const handleCloneSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-    
-    if (!cloneData.new_faculty_id) {
-      setError('Please select a faculty member');
-      return;
-    }
-    
-    setSaving(true);
-    try {
-      await courseService.clone(courseToClone._id || courseToClone.id, cloneData);
-      setShowCloneModal(false);
-      setCourseToClone(null);
-      
-      // Refresh list
-      const updatedCourses = await courseService.getAll();
-      setCourses(updatedCourses);
-    } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to clone course');
-    } finally {
-      setSaving(false);
-    }
-  };
+
 
   const handleDeleteCourse = async (courseId) => {
     if (!window.confirm("Are you sure you want to delete this course? This action cannot be undone.")) return;
@@ -177,12 +159,13 @@ const Courses = () => {
     return a.localeCompare(b);
   });
   
-  const uniqueFacultyIds = ['All', ...new Set(courses.map(c => c.faculty_id))];
+  const uniqueFacultyIds = ['All', ...new Set(courses.flatMap(c => c.faculty_ids || (c.faculty_id ? [c.faculty_id] : [])))];
 
   const filteredCourses = courses.filter(c => {
     const matchSemester = selectedSemester === 'All' || c.semester.toString() === selectedSemester.toString();
     const matchYear = selectedAcademicYear === 'All' || c.academic_year === selectedAcademicYear;
-    const matchFaculty = selectedFaculty === 'All' || c.faculty_id === selectedFaculty;
+    const fIds = c.faculty_ids || (c.faculty_id ? [c.faculty_id] : []);
+    const matchFaculty = selectedFaculty === 'All' || fIds.includes(selectedFaculty);
     return matchSemester && matchYear && matchFaculty;
   });
 
@@ -283,14 +266,7 @@ const Courses = () => {
                         className="btn-icon" 
                         style={{ padding: '4px' }}
                         title="Reuse / Clone Course"
-                        onClick={() => {
-                          setCourseToClone(course);
-                          setCloneData({
-                            new_faculty_id: course.faculty_id,
-                            new_academic_year: '2027-2028'
-                          });
-                          setShowCloneModal(true);
-                        }}
+                        onClick={() => openEditModal(course, true)}
                       >
                         <Copy size={16} />
                       </button>
@@ -334,8 +310,10 @@ const Courses = () => {
               <div className="course-faculty">
                 <Users size={16} />
                 <span>
-                  {faculty.find(f => (f._id || f.id) === course.faculty_id)?.name || 
-                   (course.faculty_id === (user?._id || user?.id) ? 'You (Current User)' : 'Assigned Faculty')}
+                  {(course.faculty_ids || (course.faculty_id ? [course.faculty_id] : [])).map(fid => {
+                    const f = faculty.find(fac => (fac._id || fac.id) === fid);
+                    return f ? f.name : (fid === (user?._id || user?.id) ? 'You (Current User)' : 'Assigned Faculty');
+                  }).join(', ')}
                 </span>
               </div>
             </div>
@@ -347,7 +325,7 @@ const Courses = () => {
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
-              <h2>{isEditing ? 'Edit Course' : 'Add New Course'}</h2>
+              <h2>{isEditing ? (formData.duplicate_course ? 'Duplicate Course' : 'Edit Course') : 'Add New Course'}</h2>
               <button className="btn-icon" onClick={() => setShowModal(false)}><X size={20} /></button>
             </div>
             <form onSubmit={handleSubmit}>
@@ -370,7 +348,7 @@ const Courses = () => {
                       onChange={handleChange}
                       placeholder="e.g. CS101"
                       required
-                      disabled={isEditing}
+                      disabled={formData.duplicate_course}
                     />
                   </div>
                   <div className="form-group mb-4" style={{ flex: 1 }}>
@@ -384,6 +362,7 @@ const Courses = () => {
                       min="1"
                       max="10"
                       required
+                      disabled={formData.duplicate_course}
                     />
                   </div>
                 </div>
@@ -399,6 +378,7 @@ const Courses = () => {
                       onChange={handleChange}
                       placeholder="e.g. Introduction to Computer Science"
                       required
+                      disabled={formData.duplicate_course}
                     />
                   </div>
                   <div className="form-group mb-4" style={{ flex: 1 }}>
@@ -410,6 +390,7 @@ const Courses = () => {
                       value={formData.short_form}
                       onChange={handleChange}
                       placeholder="e.g. OOPS LAB"
+                      disabled={formData.duplicate_course}
                     />
                   </div>
                 </div>
@@ -423,6 +404,7 @@ const Courses = () => {
                       value={formData.department}
                       onChange={handleChange}
                       required
+                      disabled={formData.duplicate_course}
                     >
                       <option value="" disabled>Select Department</option>
                       <option value="CSE">Computer Science and Engineering</option>
@@ -446,6 +428,7 @@ const Courses = () => {
                       min="1"
                       max="8"
                       required
+                      disabled={formData.duplicate_course}
                     />
                   </div>
                   <div className="form-group mb-4" style={{ flex: 1 }}>
@@ -463,29 +446,75 @@ const Courses = () => {
                 </div>
                 <div className="form-group mb-4">
                   <label className="form-label">Assign Faculty</label>
-                  <select 
+                  <div 
                     className="form-control" 
-                    name="faculty_id"
-                    value={formData.faculty_id}
-                    onChange={handleChange}
-                    required
+                    style={{ height: '150px', overflowY: 'auto', padding: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', border: '1px solid var(--border-color)', borderRadius: '0.375rem', backgroundColor: 'var(--bg-primary)' }}
                   >
-                    <option value="" disabled>Select a Faculty Member</option>
                     {faculty.map(f => (
-                      <option key={f._id || f.id} value={f._id || f.id}>
-                        {f.name} ({f.department})
-                      </option>
+                      <label key={f._id || f.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', margin: 0, padding: '4px', borderRadius: '4px' }} className="hover-bg-light">
+                        <input 
+                          type="checkbox"
+                          value={f._id || f.id}
+                          checked={formData.faculty_ids.includes(f._id || f.id)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setFormData(prev => ({
+                              ...prev,
+                              faculty_ids: e.target.checked 
+                                ? [...prev.faculty_ids, val] 
+                                : prev.faculty_ids.filter(id => id !== val)
+                            }));
+                          }}
+                          style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                        />
+                        <span style={{ fontSize: '0.95rem' }}>{f.name} ({f.department})</span>
+                      </label>
                     ))}
                     {!faculty.find(f => (f._id || f.id) === (user?._id || user?.id)) && (
-                      <option value={user?._id || user?.id}>You ({user?.name})</option>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', margin: 0, padding: '4px', borderRadius: '4px' }} className="hover-bg-light">
+                        <input 
+                          type="checkbox"
+                          value={user?._id || user?.id}
+                          checked={formData.faculty_ids.includes(user?._id || user?.id)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setFormData(prev => ({
+                              ...prev,
+                              faculty_ids: e.target.checked 
+                                ? [...prev.faculty_ids, val] 
+                                : prev.faculty_ids.filter(id => id !== val)
+                            }));
+                          }}
+                          style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                        />
+                        <span style={{ fontSize: '0.95rem' }}>You ({user?.name})</span>
+                      </label>
                     )}
-                  </select>
+                  </div>
                 </div>
+                
+                {isEditing && (
+                  <div className="form-group mb-4" style={{ backgroundColor: '#f0fdf4', padding: '12px', borderRadius: '6px', border: '1px solid #bbf7d0' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', margin: 0, fontWeight: '600', color: '#166534' }}>
+                      <input 
+                        type="checkbox"
+                        name="duplicate_course"
+                        checked={formData.duplicate_course}
+                        onChange={handleChange}
+                        style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                      />
+                      Duplicate Course for New Academic Year
+                    </label>
+                    <p style={{ margin: '4px 0 0 28px', fontSize: '0.85rem', color: '#15803d' }}>
+                      If checked, saving will create a new course instead of modifying this one.
+                    </p>
+                  </div>
+                )}
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={saving}>
-                  {saving ? 'Saving...' : (isEditing ? 'Save Changes' : 'Create Course')}
+                  {saving ? 'Saving...' : (isEditing ? (formData.duplicate_course ? 'Duplicate Course' : 'Save Changes') : 'Create Course')}
                 </button>
               </div>
             </form>
@@ -493,74 +522,6 @@ const Courses = () => {
         </div>
       )}
       
-      {showCloneModal && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h2>Reuse Course: {courseToClone?.course_name}</h2>
-              <button className="close-btn" onClick={() => setShowCloneModal(false)}>
-                <X size={20} />
-              </button>
-            </div>
-            
-            {error && (
-              <div className="alert alert-error mb-4">
-                <AlertCircle size={18} />
-                <span>{error}</span>
-              </div>
-            )}
-            
-            <form onSubmit={handleCloneSubmit}>
-              <div className="form-group">
-                <label className="form-label">Assign New Faculty</label>
-                <select 
-                  className="form-control"
-                  value={cloneData.new_faculty_id}
-                  onChange={(e) => setCloneData({...cloneData, new_faculty_id: e.target.value})}
-                  required
-                >
-                  <option value="">Select Faculty...</option>
-                  {faculty.map(f => (
-                    <option key={f._id || f.id} value={f._id || f.id}>
-                      {f.name} ({f.department})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              
-              <div className="form-group">
-                <label className="form-label">New Academic Year</label>
-                <input 
-                  type="text" 
-                  className="form-control"
-                  value={cloneData.new_academic_year}
-                  onChange={(e) => setCloneData({...cloneData, new_academic_year: e.target.value})}
-                  placeholder="e.g. 2027-2028"
-                  required
-                />
-              </div>
-              
-              <div className="modal-footer">
-                <button 
-                  type="button" 
-                  className="btn btn-secondary"
-                  onClick={() => setShowCloneModal(false)}
-                  disabled={saving}
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit" 
-                  className="btn btn-primary"
-                  disabled={saving}
-                >
-                  {saving ? 'Cloning...' : 'Reuse Course'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
