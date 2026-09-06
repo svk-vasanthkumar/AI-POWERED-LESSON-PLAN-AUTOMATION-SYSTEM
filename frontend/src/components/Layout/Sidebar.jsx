@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, FileText, FileSpreadsheet, Settings, LogOut, BarChart3, BookOpen, Users, X } from 'lucide-react';
+import { LayoutDashboard, FileText, FileSpreadsheet, Settings, LogOut, BarChart3, BookOpen, Users, X, TrendingUp } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import './Layout.css';
 
@@ -12,6 +12,7 @@ const Sidebar = ({ isOpen, closeSidebar }) => {
     { name: 'Courses', path: '/courses', icon: <BookOpen size={20} /> },
     ...(user?.role === 'admin' || user?.role === 'hod' ? [{ name: 'Faculty', path: '/faculty', icon: <Users size={20} /> }] : []),
     { name: 'Lesson Plans', path: '/lesson-plans', icon: <FileSpreadsheet size={20} /> },
+    { name: 'Progress', path: '/progress', icon: <TrendingUp size={20} /> },
     { name: 'Documents', path: '/documents', icon: <FileText size={20} /> },
     { name: 'Reports', path: '/reports', icon: <BarChart3 size={20} /> },
     { name: 'Settings', path: '/settings', icon: <Settings size={20} /> },
