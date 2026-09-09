@@ -1,9 +1,9 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { authService } from '../services/authService';
 
-const AuthContext = createContext();
+const AuthContext = createContext(null);
 
-export const AuthProvider = ({ children }) => {
+export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -15,7 +15,7 @@ export const AuthProvider = ({ children }) => {
           const profile = await authService.getProfile();
           setUser(profile);
         } catch (error) {
-          console.error("Failed to fetch user profile", error);
+          console.error('Failed to fetch user profile', error);
           authService.logout();
         }
       }
@@ -26,7 +26,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const login = async (email, password) => {
-    const data = await authService.login(email, password);
+    await authService.login(email, password);
     const profile = await authService.getProfile();
     setUser(profile);
     return profile;
@@ -42,7 +42,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const updateUser = (updatedUser) => {
-    setUser({ ...user, ...updatedUser });
+    setUser((prev) => ({ ...prev, ...updatedUser }));
   };
 
   return (
@@ -50,6 +50,12 @@ export const AuthProvider = ({ children }) => {
       {children}
     </AuthContext.Provider>
   );
-};
+}
 
-export const useAuth = () => useContext(AuthContext);
+export function useAuth() {
+  const ctx = useContext(AuthContext);
+  if (ctx === undefined || ctx === null) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return ctx;
+}
