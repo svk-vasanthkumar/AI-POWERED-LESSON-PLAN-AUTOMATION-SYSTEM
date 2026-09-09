@@ -1,21 +1,33 @@
+/* ===================================================================
+   Lesson Plans List Page
+   =================================================================== */
+
 .plans-page {
   display: flex;
   flex-direction: column;
+  animation: fadeIn 0.3s var(--ease-out);
 }
 
+/* ── Controls Bar ─────────────────────────────────────────────────── */
 .plans-controls {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
   background-color: var(--surface-color);
-  padding: 16px;
-  border-radius: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-xs);
 }
 
+/* ── Search Box ───────────────────────────────────────────────────── */
 .search-box {
   position: relative;
-  width: 320px;
+  flex: 1;
+  min-width: 180px;
+  max-width: 360px;
 }
 
 .search-icon {
@@ -24,34 +36,56 @@
   top: 50%;
   transform: translateY(-50%);
   color: var(--text-secondary);
+  pointer-events: none;
 }
 
 .search-box input {
   width: 100%;
-  padding: 10px 12px 10px 40px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  font-size: 14px;
-  transition: border-color 0.2s;
+  padding: 9px 12px 9px 38px;
+  border: 1.5px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+  background: var(--surface-color);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   outline: none;
 }
 
 .search-box input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
 }
 
-.mt-4 {
-  margin-top: 24px;
+/* ── Table scroll wrapper ─────────────────────────────────────────── */
+.plans-table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
+  background: var(--surface-color);
+  width: 100%;
 }
 
-.text-right {
-  text-align: right;
+.plans-table-wrapper .table-container {
+  border: none;
+  border-radius: 0;
+  overflow: visible;
 }
+
+.plans-table-wrapper .data-table {
+  min-width: 600px;
+}
+
+/* ── Misc ─────────────────────────────────────────────────────────── */
+.mt-4 { margin-top: 20px; }
+.text-right { text-align: right; }
 
 .action-buttons {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .empty-state-inline {
@@ -60,4 +94,33 @@
   align-items: center;
   justify-content: center;
   color: var(--text-secondary);
+}
+
+/* ── Responsive ───────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .plans-controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .search-box {
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .action-buttons {
+    justify-content: stretch;
+  }
+
+  .action-buttons .btn {
+    flex: 1;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .plans-controls {
+    padding: 12px;
+  }
 }
