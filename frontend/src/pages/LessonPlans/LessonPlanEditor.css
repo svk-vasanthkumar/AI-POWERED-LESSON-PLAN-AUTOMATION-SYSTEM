@@ -1,7 +1,7 @@
 .editor-page {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 64px - 64px); /* Rough calculation to fit viewport minus topbar and padding */
+  height: calc(100vh - 160px); 
 }
 
 .editor-top-bar {
@@ -74,6 +74,7 @@
 .editor-table {
   width: 100%;
   border-collapse: collapse;
+  min-width: 1300px; /* Increased dramatically to prevent squishing */
 }
 
 .editor-table th {
@@ -93,7 +94,7 @@
 }
 
 .editor-table td {
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--border-color);
   vertical-align: middle;
 }
@@ -102,17 +103,17 @@
   background-color: var(--surface-hover);
 }
 
-/* Inline Inputs */
+/* Inline Inputs - Gamified */
 .inline-input, .inline-textarea {
   width: 100%;
-  border: 1px solid transparent;
-  background-color: transparent;
-  padding: 8px;
-  border-radius: var(--radius-sm);
+  border: 2px solid var(--border-color);
+  background-color: var(--surface-hover);
+  padding: 10px 14px;
+  border-radius: 12px;
   font-family: inherit;
   font-size: 14px;
   color: var(--text-primary);
-  transition: all 0.2s;
+  transition: all 0.25s ease;
 }
 
 /* Hide Spin Buttons for Number Inputs */
@@ -124,20 +125,21 @@
 .inline-input[type="number"] {
   -moz-appearance: textfield;
   appearance: textfield;
-  min-width: 40px; /* Ensure it never collapses too small */
+  min-width: 60px; /* Ensure it never collapses too small */
 }
 
 .inline-input[type="text"] {
-  min-width: 80px; /* Accommodate text like 'Hour 1-2' */
+  min-width: 100px; /* Accommodate text like 'Hour 1-2' */
 }
 
 select.inline-input {
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23475569'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M8 9l4-4 4 4m0 6l-4 4-4-4'%3E%3C/path%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%234f46e5'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2.5' d='M8 9l4-4 4 4m0 6l-4 4-4-4'%3E%3C/path%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 8px center;
-  background-size: 14px;
-  padding-right: 28px;
+  background-position: right 10px center;
+  background-size: 16px;
+  padding-right: 32px;
+  cursor: pointer;
 }
 
 .inline-textarea {
@@ -145,18 +147,20 @@ select.inline-input {
   min-height: 40px;
   line-height: 1.4;
   vertical-align: middle;
+  min-width: 220px; /* Prevent topic text from squishing */
 }
 
-.inline-input:hover, .inline-textarea:hover {
-  border-color: var(--border-color);
-  background-color: var(--surface-color);
+.inline-input:hover:not(:disabled), .inline-textarea:hover:not(:disabled) {
+  border-color: var(--accent-muted);
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.05);
+  background-color: transparent;
 }
 
 .inline-input:focus, .inline-textarea:focus {
   outline: none;
+  background-color: transparent;
   border-color: var(--accent);
-  background-color: var(--surface-color);
-  box-shadow: 0 0 0 2px var(--accent-light);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
 }
 
 .editor-loading {
@@ -219,4 +223,192 @@ select.inline-input {
 /* Exam row highlight in the editor table */
 .editor-table tbody tr:has(.text-danger.fw-bold) {
   background-color: rgba(239, 68, 68, 0.04);
+}
+
+/* ── Responsive ───────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .editor-top-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-md);
+  }
+  
+  .top-bar-left {
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+  
+  .top-bar-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 768px) {
+  .editor-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .editor-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  
+  .col-md-6 {
+    flex: 1 1 100%;
+  }
+
+  /* Ensure the table wrapper doesn't force horizontal scroll on mobile */
+  .editor-content {
+    min-width: 0;
+  }
+  
+  .editor-table-wrapper {
+    width: 100%;
+    overflow-x: hidden;
+  }
+  
+  .editor-table {
+    min-width: 100%;
+    display: block;
+  }
+  
+  .editor-table thead {
+    display: none; /* Hide table headers */
+  }
+  
+  .editor-table tbody {
+    display: block;
+  }
+  
+  .editor-table tr {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 24px;
+    background-color: var(--surface);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 16px 20px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  
+  .editor-table tr:active {
+    transform: scale(0.99);
+  }
+  
+  /* Colorful accent strip */
+  .editor-table tr::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    background: linear-gradient(180deg, var(--primary, #4f46e5), var(--accent, #8b5cf6));
+  }
+  
+  .editor-table td {
+    display: flex;
+    flex-direction: column;
+    padding: 12px 0;
+    border-bottom: 1px dashed var(--border-color);
+  }
+  
+  .editor-table td:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+  
+  .editor-table td::before {
+    content: attr(data-label);
+    font-size: 10px;
+    text-transform: uppercase;
+    font-weight: 800;
+    color: #ffffff;
+    background: linear-gradient(135deg, var(--primary, #4f46e5), var(--accent, #8b5cf6));
+    padding: 4px 10px;
+    border-radius: 20px;
+    margin-bottom: 8px;
+    letter-spacing: 1px;
+    display: inline-block;
+    align-self: flex-start;
+    box-shadow: 0 2px 6px rgba(99, 102, 241, 0.25);
+  }
+  
+  /* Make the 'No.' row label slightly different or hide it to save space, but let's just color it */
+  .editor-table td[data-label="No."] {
+    align-items: center;
+    border-bottom: 2px solid var(--border-color);
+    padding-top: 0;
+    font-size: 1.25rem;
+    font-weight: 800;
+    color: var(--primary);
+  }
+  
+  .editor-table td[data-label="No."]::before {
+    display: none;
+  }
+  
+  /* Action button row specifically */
+  .editor-table td[data-label="Actions"] {
+    align-items: center;
+    background-color: rgba(99, 102, 241, 0.05);
+    margin: 12px -20px -16px -20px;
+    padding: 16px;
+    border-radius: 0 0 16px 16px;
+    flex-direction: row;
+    justify-content: center;
+    border-bottom: none;
+  }
+  .editor-table td[data-label="Actions"]::before {
+    display: none;
+  }
+  
+  /* Ensure inputs take full width on mobile cards */
+  .inline-input, .inline-textarea {
+    width: 100%;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .editor-actions {
+    flex-direction: column;
+  }
+  
+  .editor-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  
+  .editor-table th, .editor-table td {
+    padding: 10px 12px;
+  }
+  
+  .module-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .module-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+  
+  /* Make top bar actions full width on small screens */
+  .top-bar-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  
+  .top-bar-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
 }
