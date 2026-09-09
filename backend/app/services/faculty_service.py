@@ -94,7 +94,7 @@ async def create_faculty(data):
             name=data.name,
             email=data.email.lower(),
             password=hash_password(data.password),
-            role="faculty",
+            role="hod" if data.designation == "HOD" else "faculty",
             department=data.department,
         )
         try:
@@ -181,44 +181,44 @@ async def update_faculty(faculty_id: str, data):
 
     password = update_data.pop("password", None)
 
-    if "faculty_id" in update_data:
-        existing = await db.faculty.find_one({"faculty_id": update_data["faculty_id"], "_id": {"$ne": obj_id}})
-        if existing:
-            raise ValueError("Faculty ID already exists")
-            
+    # Sync updates (name, department, email, designation->role, password) to the associated user account
+    user_updates = {}
+    if "name" in update_data:
+        user_updates["name"] = update_data["name"]
+    if "department" in update_data:
+        user_updates["department"] = update_data["department"]
     if "email" in update_data:
-        update_data["email"] = update_data["email"].lower()
-        if faculty.get("email") != update_data["email"]:
-            existing_user = await db.users.find_one({"email": update_data["email"]})
-            if existing_user:
-                raise ValueError("Email already in use by another user")
-            
-            # Update the linked user account if it exists
-            if faculty.get("user_id"):
-                await db.users.update_one(
-                    {"_id": ObjectId(faculty["user_id"])},
-                    {"$set": {"email": update_data["email"], "updated_at": datetime.now(UTC)}}
-                )
-
+        user_updates["email"] = update_data["email"]
+    if "designation" in update_data:
+        user_updates["role"] = "hod" if update_data["designation"] == "HOD" else "faculty"
     if password:
-        hashed_password = hash_password(password)
+        user_updates["password"] = hash_password(password)
+
+    if user_updates:
+        user_updates["updated_at"] = datetime.now(UTC)
+        user_filter = None
         if faculty.get("user_id"):
-            await db.users.update_one(
-                {"_id": ObjectId(faculty["user_id"])},
-                {"$set": {"password": hashed_password, "updated_at": datetime.now(UTC)}}
-            )
-        else:
+            try:
+                user_filter = {"_id": ObjectId(str(faculty["user_id"]))}
+            except Exception:
+                pass
+        if not user_filter and faculty.get("email"):
+            user_filter = {"email": faculty["email"].lower()}
+
+        if user_filter:
+            await db.users.update_one(user_filter, {"$set": user_updates})
+        elif password:
             from app.models.user_model import create_user_document
-            email = update_data.get("email", faculty.get("email"))
-            name = update_data.get("name", faculty.get("name"))
-            dept = update_data.get("department", faculty.get("department"))
+            email_val = update_data.get("email", faculty.get("email"))
+            name_val = update_data.get("name", faculty.get("name"))
+            dept_val = update_data.get("department", faculty.get("department"))
             
             user_document = create_user_document(
-                name=name,
-                email=email,
-                password=hashed_password,
-                role="faculty",
-                department=dept,
+                name=name_val,
+                email=email_val,
+                password=user_updates["password"],
+                role="hod" if update_data.get("designation", faculty.get("designation")) == "HOD" else "faculty",
+                department=dept_val,
             )
             try:
                 user_result = await db.users.insert_one(user_document)
@@ -226,7 +226,7 @@ async def update_faculty(faculty_id: str, data):
             except DuplicateKeyError:
                 raise ValueError("Email already in use by another user")
 
-    # In case update_data is empty after popping password
+    # In case update_data is empty after processing
     if not update_data:
         return 1
 
