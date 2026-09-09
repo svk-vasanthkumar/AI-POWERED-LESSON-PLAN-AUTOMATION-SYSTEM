@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str
     GROQ_MODEL: str = "qwen/qwen3.8-27b"
 
+    # --- Google OAuth ---
+    GOOGLE_CLIENT_ID: str = ""
+
     # --- Email (SMTP) ---
     SMTP_SERVER: str = ""
     SMTP_PORT: int = 587
@@ -40,6 +43,10 @@ class Settings(BaseSettings):
     # Rasterisation zoom used when rendering scanned PDF pages to images for
     # OCR. 2.0 (~144 DPI) balances recognition quality against memory/CPU.
     OCR_RENDER_ZOOM: float = 2.0
+
+    # --- Web Push (VAPID) ---
+    VAPID_PRIVATE_KEY: str = ""
+    VAPID_CLAIM_EMAIL: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
