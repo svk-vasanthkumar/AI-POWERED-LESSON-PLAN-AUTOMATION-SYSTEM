@@ -253,7 +253,7 @@ def format_date_with_day(date_value, day_value=None) -> str:
         pretty = parsed.strftime("%d %b %Y")
     else:
         pretty = text
-    return f"{pretty} ({weekday})" if weekday else pretty
+    return f"{pretty}\n({weekday})" if weekday else pretty
 
 
 def format_topics_covered(session: dict, planned_topic: str) -> str:
@@ -335,6 +335,25 @@ def _row_from_session(session: dict, topic_index: dict[str, dict]) -> dict:
         executed_date = format_date_with_day(
             session.get("rescheduled_date"), session.get("rescheduled_day")
         )
+    
+    # Append the executed hour if available
+    executed_period = ""
+    eps = session.get("executed_period_start")
+    epe = session.get("executed_period_end")
+    if eps is not None:
+        try:
+            eps_i = int(eps)
+            epe_i = int(epe) if epe is not None else eps_i
+            if epe_i is None or epe_i <= eps_i:
+                executed_period = f"Hour {eps_i}"
+            else:
+                executed_period = f"Hour {eps_i}{_EN_DASH}{epe_i}"
+        except (TypeError, ValueError):
+            pass
+            
+    if executed_date and executed_period:
+        executed_date = f"{executed_date}\n({executed_period})"
+
     planned_date = session.get("planned_date") or session.get("date")
     planned_day = session.get("planned_day") or session.get("day")
     return {
@@ -587,7 +606,10 @@ def export_ace_pdf(context: dict) -> bytes:
         )
 
         def P(text: str, style) -> Paragraph:
-            return Paragraph(_xml_escape(text or ""), style)
+            escaped_text = _xml_escape(text or "")
+            # Convert newlines to ReportLab line breaks
+            html_text = escaped_text.replace("\n", "<br/>")
+            return Paragraph(html_text, style)
 
         story: list = []
         story.append(P(context["institution"], st_inst))
@@ -601,17 +623,26 @@ def export_ace_pdf(context: dict) -> bytes:
         story.append(
             Paragraph(f"<b>Name of the Faculty: {_xml_escape(meta.get('Name of the Faculty', ''))}</b>", st_meta)
         )
-        story.append(Spacer(1, 16))
         story.append(
             Paragraph(f"<b>Department: {_xml_escape(meta.get('Department', ''))}</b>", st_meta)
         )
-        story.append(
-            Paragraph(
-                f"<b>Programme: {_xml_escape(meta.get('Programme', ''))}"
-                f" &nbsp;&nbsp;&nbsp;&nbsp; Semester: {_xml_escape(meta.get('Semester', ''))}</b>",
-                st_meta,
-            )
+        # Use a table for the Programme and Semester row to ensure it's flush left and Semester is perfectly flush right.
+        prog_text = f"<b>Programme: {_xml_escape(meta.get('Programme', ''))}</b>"
+        sem_text = f"<b>Semester: {_xml_escape(meta.get('Semester', ''))}</b>"
+        meta_table = Table(
+            [[Paragraph(prog_text, st_meta), Paragraph(sem_text, st_meta)]],
+            colWidths=[14.2 * cm, 4.0 * cm],
+            hAlign='LEFT'
         )
+        meta_table.setStyle(TableStyle([
+            ('ALIGN', (0, 0), (0, 0), 'LEFT'),
+            ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+            ('TOPPADDING', (0, 0), (-1, -1), 0),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+        ]))
+        story.append(meta_table)
         story.append(
             Paragraph(f"<b>Course Code &amp; Title: {_xml_escape(meta.get('Course Code & Title', ''))}</b>", st_meta)
         )
@@ -746,13 +777,17 @@ def export_ace_docx(context: dict) -> bytes:
         p1 = document.add_paragraph()
         p1.add_run(f"Name of the Faculty: {meta.get('Name of the Faculty', '')}").bold = True
         
-        document.add_paragraph()
-        
         p2 = document.add_paragraph()
         p2.add_run(f"Department: {meta.get('Department', '')}").bold = True
         
+        # In DOCX, we use a single paragraph with a right-aligned tab to separate Programme and Semester.
+        from docx.enum.text import WD_TAB_ALIGNMENT
+        from docx.shared import Inches
         p3 = document.add_paragraph()
-        p3.add_run(f"Programme: {meta.get('Programme', '')}    Semester: {meta.get('Semester', '')}").bold = True
+        p3.paragraph_format.tab_stops.add_tab_stop(Inches(6.5), WD_TAB_ALIGNMENT.RIGHT)
+        p3.add_run(f"Programme: {meta.get('Programme', '')}").bold = True
+        p3.add_run("\t")
+        p3.add_run(f"Semester: {meta.get('Semester', '')}").bold = True
         
         p4 = document.add_paragraph()
         p4.add_run(f"Course Code & Title: {meta.get('Course Code & Title', '')}").bold = True
