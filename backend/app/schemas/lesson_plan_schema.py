@@ -5,6 +5,7 @@ class LessonPlanUpdate(BaseModel):
     lesson_plan: str | None = Field(default=None, min_length=10)
     sessions: list[dict] | None = None
     status: str | None = None
+    approval_remarks: str | None = None
 
 
 # ---------------------------------------------------------------------------
