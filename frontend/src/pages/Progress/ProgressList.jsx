@@ -78,7 +78,7 @@ const ProgressList = () => {
           courses.map((course) => (
             <div 
               key={course._id || course.id} 
-              className="progress-course-card"
+              className={`progress-course-card ${course.status !== 'Ready' ? 'opacity-75' : ''}`}
               onClick={() => navigate(`/progress/${course._id || course.id}`)}
             >
               <div className="progress-course-header">
@@ -110,9 +110,15 @@ const ProgressList = () => {
                 </div>
               </div>
 
-              <div className="card-footer mt-4 text-right" style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                <button className="btn btn-outline" style={{ color: 'var(--primary)', borderColor: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  Track Execution <ChevronRight size={16} />
+              <div className="card-footer mt-4" style={{ borderTop: '1px solid var(--border-color)', paddingTop: '14px' }}>
+                <button
+                  className={`btn btn-sm w-100 ${course.status !== 'Ready' ? 'btn-secondary' : 'btn-outline-primary'}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate(`/progress/${course._id || course.id}`);
+                  }}
+                >
+                  {course.status !== 'Ready' ? 'View Setup Status' : (user?.role === 'faculty' ? 'Update Progress' : 'Track Execution')} <ChevronRight size={15} />
                 </button>
               </div>
             </div>
