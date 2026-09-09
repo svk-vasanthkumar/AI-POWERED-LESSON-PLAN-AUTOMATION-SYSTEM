@@ -15,6 +15,7 @@ import ProgressList from './pages/Progress/ProgressList';
 import CourseProgress from './pages/Progress/CourseProgress';
 import Login from './pages/Auth/Login';
 import ResetPassword from './pages/Auth/ResetPassword';
+import VerifyEmail from './pages/Auth/VerifyEmail';
 import Settings from './pages/Settings/Settings';
 import Reports from './pages/Reports/Reports';
 
@@ -27,6 +28,7 @@ const App = () => {
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/login" element={<Login />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/verify-email" element={<VerifyEmail />} />
             
             <Route element={<Layout />}>
               <Route path="/dashboard" element={<Dashboard />} />
@@ -35,6 +37,8 @@ const App = () => {
               <Route path="/lesson-plans" element={<LessonPlansList />} />
               <Route path="/lesson-plans/create" element={<LessonPlanCreator />} />
               <Route path="/lesson-plans/:id" element={<LessonPlanEditor />} />
+              <Route path="/lesson-plans/edit/:id" element={<LessonPlanEditor />} />
+              <Route path="/lesson-plans/edit/:courseId/:id" element={<LessonPlanEditor />} />
               <Route path="/progress" element={<ProgressList />} />
               <Route path="/progress/:courseId" element={<CourseProgress />} />
               <Route path="/documents" element={<Documents />} />
