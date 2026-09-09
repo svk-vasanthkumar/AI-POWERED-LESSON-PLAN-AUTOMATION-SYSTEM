@@ -36,6 +36,20 @@ export const schedulerService = {
     const response = await api.get(`/scheduler/${courseId}/progress`);
     return response.data;
   },
+
+  getAvailableDates: async (courseId) => {
+    const response = await api.get(`/scheduler/${courseId}/available-dates`);
+    return response.data;
+  },
+
+  /** HOD/Admin adds a supervisory remark to a session without changing status. */
+  addHodRemark: async (courseId, sessionId, remark) => {
+    const response = await api.post(
+      `/scheduler/${courseId}/sessions/${sessionId}/hod-remark`,
+      { remark }
+    );
+    return response.data;
+  },
   
   exportPdf: async (courseId) => {
     const response = await api.get(`/scheduler/${courseId}/export/pdf`, { responseType: 'blob' });
@@ -52,3 +66,4 @@ export const schedulerService = {
     return response.data;
   }
 };
+
