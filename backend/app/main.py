@@ -10,6 +10,9 @@ from app.api.v1.lesson_plan import router as lesson_router
 from app.api.v1.syllabus import router as syllabus_router
 from app.config.settings import settings
 from app.core.exception import register_exception_handlers
+from app.core.limiter import limiter
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from app.database.mongodb import (
     DatabaseUnavailableError,
     close_mongo_connection,
@@ -43,8 +46,25 @@ async def lifespan(app: FastAPI):
         7: {"start_time": "15:10", "end_time": "16:00"},
     })
     await connect_to_mongo()
+
+    # Migration: mark all existing users that were created before email-verification
+    # was introduced as verified so they are not locked out.
+    # This only updates documents that don't yet have the is_email_verified field.
+    try:
+        from app.database.mongodb import get_database
+        db = get_database()
+        result = await db.users.update_many(
+            {"is_email_verified": {"$exists": False}},
+            {"$set": {"is_email_verified": True, "auth_provider": "local"}}
+        )
+        if result.modified_count:
+            print(f"[Migration] Marked {result.modified_count} existing user(s) as email-verified.")
+    except Exception as e:
+        print(f"[Migration Warning] Could not run email_verified migration: {e}")
+
     yield
     await close_mongo_connection()
+
 
 
 app = FastAPI(
@@ -64,6 +84,10 @@ app.add_middleware(
 
 # Register Global Exception Handlers
 register_exception_handlers(app)
+
+# Rate Limiter Configuration
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Include API Routers
 app.include_router(auth_router)
