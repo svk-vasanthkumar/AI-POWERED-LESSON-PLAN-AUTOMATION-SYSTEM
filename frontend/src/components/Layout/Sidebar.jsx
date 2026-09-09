@@ -49,10 +49,10 @@ const Sidebar = ({ isOpen, closeSidebar }) => {
       
       <div className="sidebar-footer">
         <div className="user-profile">
-          <div className="user-avatar">{user?.email?.charAt(0).toUpperCase() || 'U'}</div>
+          <div className="user-avatar">{(user?.name || user?.email || 'U').charAt(0).toUpperCase()}</div>
           <div className="user-info">
             <p className="user-name">{user?.name || 'User'}</p>
-            <p className="user-role">{user?.role || 'Faculty'}</p>
+            <p className="user-role">{user?.role ? (user.role.toLowerCase() === 'hod' ? 'HOD' : user.role.charAt(0).toUpperCase() + user.role.slice(1)) : 'Faculty'}</p>
           </div>
         </div>
         <button onClick={logout} className="logout-btn">
