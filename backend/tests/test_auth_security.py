@@ -67,7 +67,7 @@ async def _insert_user(db, *, role="faculty", email="user@example.com", password
 def test_public_registration_without_role_creates_faculty(client, db):
     response = client.post(
         "/auth/register",
-        json={"name": "Faculty User", "email": "faculty1@example.com", "password": "secret1", "department": "CSE"},
+        json={"name": "Faculty User", "email": "faculty1@example.com", "password": "Secret@123", "department": "CSE"},
     )
 
     assert response.status_code == 200
@@ -78,7 +78,7 @@ def test_public_registration_without_role_creates_faculty(client, db):
 def test_public_registration_with_faculty_role_creates_faculty(client, db):
     response = client.post(
         "/auth/register",
-        json={"name": "Faculty User", "email": "faculty2@example.com", "password": "secret1", "role": "faculty", "department": "CSE"},
+        json={"name": "Faculty User", "email": "faculty2@example.com", "password": "Secret@123", "role": "faculty", "department": "CSE"},
     )
 
     assert response.status_code == 200
@@ -90,12 +90,20 @@ def test_public_registration_with_faculty_role_creates_faculty(client, db):
 def test_public_registration_rejects_privileged_roles(client, db, role):
     response = client.post(
         "/auth/register",
-        json={"name": "Privileged User", "email": f"{role}@example.com", "password": "secret1", "role": role, "department": "CSE"},
+        json={"name": "Privileged User", "email": f"{role}@example.com", "password": "Secret@123", "role": role, "department": "CSE"},
     )
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Public registration can only create faculty users"
     assert _run(db.users.find_one({"email": f"{role}@example.com"})) is None
+
+
+def test_weak_password_registration_rejected(client):
+    response = client.post(
+        "/auth/register",
+        json={"name": "Weak User", "email": "weak@example.com", "password": "weak", "department": "CSE"},
+    )
+    assert response.status_code == 422
 
 
 def test_existing_user_jwt_authenticates_from_database(client, db):
@@ -193,11 +201,11 @@ def test_existing_login_still_returns_usable_bearer_token(client, db):
     # Use the public registration flow to obtain a real bcrypt hash for this user.
     response = client.post(
         "/auth/register",
-        json={"name": "Login User", "email": "real-login@example.com", "password": "secret1", "department": "CSE"},
+        json={"name": "Login User", "email": "real-login@example.com", "password": "Secret@123", "department": "CSE"},
     )
     assert response.status_code == 200
 
-    login = client.post("/auth/login", json={"email": "real-login@example.com", "password": "secret1"})
+    login = client.post("/auth/login", json={"email": "real-login@example.com", "password": "Secret@123"})
     assert login.status_code == 200
     assert login.json()["token_type"] == "bearer"
 
