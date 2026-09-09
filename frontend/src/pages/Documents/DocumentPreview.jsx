@@ -7,6 +7,7 @@ import { courseService } from '../../services/courseService';
 import { facultyService } from '../../services/facultyService';
 import { FileText, CalendarClock, Table } from 'lucide-react';
 import { useAlert } from '../../context/AlertContext';
+import CustomSelect from '../../components/common/CustomSelect';
 import './DocumentPreview.css';
 
 const DocumentPreview = () => {
@@ -328,7 +329,7 @@ const DocumentPreview = () => {
           <p><strong>Semester:</strong> {data.semester}</p>
           <p><strong>Status:</strong> <span className={`badge badge-${data.status === 'confirmed' ? 'success' : 'warning'}`}>{data.status || 'pending_review'}</span></p>
           
-          <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+          <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem', flexWrap: 'wrap' }}>
             <div>
               <label style={{ fontSize: '0.85rem', fontWeight: 'bold', display: 'block', marginBottom: '0.25rem' }}>Semester Start</label>
               <input
@@ -346,6 +347,31 @@ const DocumentPreview = () => {
                 className="form-control"
                 value={formatDate(data.semester_end)}
                 onChange={e => setData(prev => ({ ...prev, semester_end: e.target.value }))}
+                style={{ width: 'auto' }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.85rem', fontWeight: 'bold', display: 'block', marginBottom: '0.25rem' }}>Last Working Day</label>
+              <input
+                type="date"
+                className="form-control"
+                value={formatDate((data.events || []).find(e => e.type === 'last_working_day')?.date || '')}
+                onChange={e => setData(prev => {
+                  const events = prev.events || [];
+                  const existingIdx = events.findIndex(ev => ev.type === 'last_working_day');
+                  const newEvents = [...events];
+                  
+                  if (existingIdx >= 0) {
+                    if (e.target.value) {
+                      newEvents[existingIdx] = { ...newEvents[existingIdx], date: e.target.value };
+                    } else {
+                      newEvents.splice(existingIdx, 1);
+                    }
+                  } else if (e.target.value) {
+                    newEvents.push({ type: 'last_working_day', name: 'Last Working Day', date: e.target.value });
+                  }
+                  return { ...prev, events: newEvents };
+                })}
                 style={{ width: 'auto' }}
               />
             </div>
@@ -540,7 +566,7 @@ const DocumentPreview = () => {
                   {editSchedule.map((item, index) => (
                     <tr key={index}>
                       <td>
-                        <select
+                        <CustomSelect
                           className="form-control"
                           value={item.day || 'Monday'}
                           onChange={(e) => handleTimetableChange(index, 'day', e.target.value)}
@@ -551,7 +577,7 @@ const DocumentPreview = () => {
                           <option value="Thursday">Thursday</option>
                           <option value="Friday">Friday</option>
                           <option value="Saturday">Saturday</option>
-                        </select>
+                        </CustomSelect>
                       </td>
                       <td>
                         <input
@@ -566,7 +592,7 @@ const DocumentPreview = () => {
                       </td>
                       <td>
                         <div style={{ display: 'flex', gap: '0.5rem' }}>
-                          <select
+                          <CustomSelect
                             className="form-control"
                             value={item.period_start ?? 1}
                             onChange={(e) => handleTimetableChange(index, 'period_start', e.target.value)}
@@ -574,8 +600,8 @@ const DocumentPreview = () => {
                             {[1, 2, 3, 4, 5, 6, 7].map(p => (
                               <option key={p} value={p}>Hour {p}</option>
                             ))}
-                          </select>
-                          <select
+                          </CustomSelect>
+                          <CustomSelect
                             className="form-control"
                             value={item.period_end ?? item.period_start ?? 1}
                             onChange={(e) => handleTimetableChange(index, 'period_end', e.target.value)}
@@ -583,7 +609,7 @@ const DocumentPreview = () => {
                             {[1, 2, 3, 4, 5, 6, 7].map(p => (
                               <option key={p} value={p}>Hour {p}</option>
                             ))}
-                          </select>
+                          </CustomSelect>
                         </div>
                       </td>
                       <td style={{ width: '40%' }}>
