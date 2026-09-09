@@ -17,6 +17,7 @@ env/
 .env
 .env.*
 !.env.example
+*.pem
 
 # Backend runtime files
 backend/app/uploads/*
@@ -34,6 +35,9 @@ build/
 
 # Test and coverage output
 coverage/
+backend/test_db.py
+backend/test_dates.py
+backend/test_available_dates.py
 
 # Editors and operating systems
 .vscode/
