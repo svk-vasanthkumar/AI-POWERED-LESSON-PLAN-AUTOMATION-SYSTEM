@@ -3,10 +3,13 @@ import { BookOpen, Plus, X, Users, CheckCircle, AlertCircle, Copy, Edit2, Trash2
 import { courseService } from '../../services/courseService';
 import { facultyService } from '../../services/facultyService';
 import { useAuth } from '../../context/AuthContext';
+import { useAlert } from '../../context/AlertContext';
+import CustomSelect from '../../components/common/CustomSelect';
 import './Courses.css';
 
 const Courses = () => {
   const { user } = useAuth();
+  const { showAlert, showConfirm } = useAlert();
   const [courses, setCourses] = useState([]);
   const [faculty, setFaculty] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -113,13 +116,16 @@ const Courses = () => {
             new_faculty_ids: formData.faculty_ids,
             new_academic_year: formData.academic_year
           });
+          showAlert('Course cloned successfully', 'success');
         } else {
           const updateData = { ...formData };
           delete updateData.duplicate_course;
           await courseService.update(courseToEditId, updateData);
+          showAlert('Course updated successfully', 'success');
         }
       } else {
         await courseService.create(formData);
+        showAlert('Course created successfully', 'success');
       }
       
       await fetchData(); // Refresh list
@@ -134,14 +140,16 @@ const Courses = () => {
 
 
   const handleDeleteCourse = async (courseId) => {
-    if (!window.confirm("Are you sure you want to delete this course? This action cannot be undone.")) return;
+    const confirmed = await showConfirm("Are you sure you want to delete this course? This action cannot be undone.", "Delete Course");
+    if (!confirmed) return;
     
     setLoading(true);
     try {
       await courseService.delete(courseId);
+      showAlert('Course deleted successfully', 'success');
       await fetchData(); // Refresh list after deletion
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to delete course');
+      showAlert(err.response?.data?.detail || 'Failed to delete course', 'error');
     } finally {
       setLoading(false);
     }
@@ -171,52 +179,58 @@ const Courses = () => {
 
   return (
     <div className="courses-page">
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="page-header">
         <div>
           <h1 className="page-title">Courses</h1>
           <p className="page-subtitle">Manage academic courses and assign faculty members.</p>
         </div>
-        <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <select 
-            className="form-control" 
-            style={{ width: '160px' }}
-            value={selectedAcademicYear}
-            onChange={(e) => setSelectedAcademicYear(e.target.value)}
-          >
-            {uniqueAcademicYears.map(year => (
-              <option key={year} value={year}>
-                {year === 'All' ? 'All Years' : year}
-              </option>
-            ))}
-          </select>
-          <select 
-            className="form-control" 
-            style={{ width: '160px' }}
-            value={selectedSemester}
-            onChange={(e) => setSelectedSemester(e.target.value)}
-          >
-            {uniqueSemesters.map(sem => (
-              <option key={sem} value={sem}>
-                {sem === 'All' ? 'All Semesters' : `Semester ${sem}`}
-              </option>
-            ))}
-          </select>
-          <select 
-            className="form-control" 
-            style={{ width: '180px' }}
-            value={selectedFaculty}
-            onChange={(e) => setSelectedFaculty(e.target.value)}
-          >
-            {uniqueFacultyIds.map(fid => {
-              if (fid === 'All') return <option key={fid} value={fid}>All Faculty</option>;
-              const f = faculty.find(fac => (fac._id || fac.id) === fid);
-              return (
-                <option key={fid} value={fid}>
-                  {f ? f.name : 'Unknown Faculty'}
+        <div className="courses-controls">
+          <div className="filter-group">
+            <label className="form-label text-xs">Academic Year</label>
+            <CustomSelect 
+              className="form-control" 
+              value={selectedAcademicYear}
+              onChange={(e) => setSelectedAcademicYear(e.target.value)}
+            >
+              {uniqueAcademicYears.map(year => (
+                <option key={year} value={year}>
+                  {year === 'All' ? 'All Years' : year}
                 </option>
-              );
-            })}
-          </select>
+              ))}
+            </CustomSelect>
+          </div>
+          <div className="filter-group">
+            <label className="form-label text-xs">Semester</label>
+            <CustomSelect 
+              className="form-control" 
+              value={selectedSemester}
+              onChange={(e) => setSelectedSemester(e.target.value)}
+            >
+              {uniqueSemesters.map(sem => (
+                <option key={sem} value={sem}>
+                  {sem === 'All' ? 'All Semesters' : `Semester ${sem}`}
+                </option>
+              ))}
+            </CustomSelect>
+          </div>
+          <div className="filter-group">
+            <label className="form-label text-xs">Faculty</label>
+            <CustomSelect 
+              className="form-control" 
+              value={selectedFaculty}
+              onChange={(e) => setSelectedFaculty(e.target.value)}
+            >
+              {uniqueFacultyIds.map(fid => {
+                if (fid === 'All') return <option key={fid} value={fid}>All Faculty</option>;
+                const f = faculty.find(fac => (fac._id || fac.id) === fid);
+                return (
+                  <option key={fid} value={fid}>
+                    {f ? f.name : 'Unknown Faculty'}
+                  </option>
+                );
+              })}
+            </CustomSelect>
+          </div>
           {(user?.role === 'admin' || user?.role === 'hod') && (
             <button className="btn btn-primary" onClick={openCreateModal}>
               <Plus size={18} />
@@ -329,7 +343,7 @@ const Courses = () => {
               <button className="btn-icon" onClick={() => setShowModal(false)}><X size={20} /></button>
             </div>
             <form onSubmit={handleSubmit}>
-              <div className="modal-body">
+              <div className="modal-body" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
                 {error && (
                   <div className="alert alert-error mb-4">
                     <AlertCircle size={16} />
@@ -337,7 +351,7 @@ const Courses = () => {
                   </div>
                 )}
                 
-                <div className="form-row" style={{ display: 'flex', gap: '1rem' }}>
+                <div className="form-row">
                   <div className="form-group mb-4" style={{ flex: 1 }}>
                     <label className="form-label">Course Code</label>
                     <input 
@@ -367,7 +381,7 @@ const Courses = () => {
                   </div>
                 </div>
 
-                <div className="form-row" style={{ display: 'flex', gap: '1rem' }}>
+                <div className="form-row">
                   <div className="form-group mb-4" style={{ flex: 2 }}>
                     <label className="form-label">Course Name</label>
                     <input 
@@ -382,7 +396,7 @@ const Courses = () => {
                     />
                   </div>
                   <div className="form-group mb-4" style={{ flex: 1 }}>
-                    <label className="form-label">Short Form (Optional)</label>
+                    <label className="form-label" style={{ whiteSpace: 'nowrap' }}>Short Form (Optional)</label>
                     <input 
                       type="text" 
                       className="form-control" 
@@ -395,16 +409,15 @@ const Courses = () => {
                   </div>
                 </div>
 
-                <div className="form-row" style={{ display: 'flex', gap: '1rem' }}>
+                <div className="form-row">
                   <div className="form-group mb-4" style={{ flex: 1 }}>
                     <label className="form-label">Department</label>
-                    <select 
+                    <CustomSelect 
                       className="form-control" 
                       name="department"
                       value={formData.department}
                       onChange={handleChange}
                       required
-                      disabled={formData.duplicate_course}
                     >
                       <option value="" disabled>Select Department</option>
                       <option value="CSE">Computer Science and Engineering</option>
@@ -415,7 +428,7 @@ const Courses = () => {
                       <option value="CIVIL">Civil Engineering</option>
                       <option value="AIDS">Artificial Intelligence and Data Science</option>
                       <option value="S&H">Science and Humanities</option>
-                    </select>
+                    </CustomSelect>
                   </div>
                   <div className="form-group mb-4" style={{ flex: 1 }}>
                     <label className="form-label">Semester</label>
@@ -470,7 +483,7 @@ const Courses = () => {
                         <span style={{ fontSize: '0.95rem' }}>{f.name} ({f.department})</span>
                       </label>
                     ))}
-                    {!faculty.find(f => (f._id || f.id) === (user?._id || user?.id)) && (
+                    {!faculty.find(f => String(f._id || f.id) === String(user?._id || user?.id)) && (
                       <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', margin: 0, padding: '4px', borderRadius: '4px' }} className="hover-bg-light">
                         <input 
                           type="checkbox"
