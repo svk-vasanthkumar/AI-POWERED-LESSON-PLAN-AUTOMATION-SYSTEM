@@ -6,18 +6,23 @@ import { lessonPlanService } from '../../services/lessonPlanService';
 import { courseService } from '../../services/courseService';
 import { academicCalendarService } from '../../services/academicCalendarService';
 import { timetableService } from '../../services/timetableService';
+import { facultyService } from '../../services/facultyService';
 import { schedulerService } from '../../services/schedulerService';
+import { useAuth } from '../../context/AuthContext';
 import { useAlert } from '../../context/AlertContext';
+import CustomSelect from '../../components/common/CustomSelect';
 import './LessonPlanCreator.css';
 
 const LessonPlanCreator = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { showAlert } = useAlert();
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [syllabi, setSyllabi] = useState([]);
   const [calendars, setCalendars] = useState([]);
   const [timetables, setTimetables] = useState([]);
+  const [syllabusTab, setSyllabusTab] = useState('my');
   
   // Wizard State
   const [projectState, setProjectState] = useState({
@@ -47,20 +52,41 @@ const LessonPlanCreator = () => {
   useEffect(() => {
     const loadSyllabi = async () => {
       try {
-        const [data, courses, cals, times] = await Promise.all([
+        const [data, courses, cals, times, faculties] = await Promise.all([
           syllabusService.getAll(),
           courseService.getAll().catch(() => []),
           academicCalendarService.getAll().catch(() => []),
-          timetableService.getAll().catch(() => [])
+          timetableService.getAll().catch(() => []),
+          facultyService.getAll().catch(() => [])
         ]);
         
+        const currentUserId = user?.id || user?._id;
+        const currentUserFaculty = faculties.find(f => 
+          (f.user_id && currentUserId && String(f.user_id) === String(currentUserId)) ||
+          (f.email && user?.email && f.email.toLowerCase() === user.email.toLowerCase())
+        );
+
         const enrichedSyllabi = data.map(syllabus => {
           const course = courses.find(c => c._id === syllabus.course_id || c.id === syllabus.course_id);
+          const courseFacultyIds = Array.isArray(course?.faculty_ids) && course.faculty_ids.length > 0
+            ? course.faculty_ids 
+            : (course?.faculty_id ? [course.faculty_id] : (course?.assigned_faculty_id ? [course.assigned_faculty_id] : []));
+
+          const isMyCourse = courseFacultyIds.some(fid => 
+            String(fid) === String(currentUserId) ||
+            (currentUserFaculty && (
+              String(fid) === String(currentUserFaculty._id) || 
+              String(fid) === String(currentUserFaculty.id) || 
+              String(fid) === String(currentUserFaculty.faculty_id)
+            ))
+          );
+
           return {
             ...syllabus,
             course_name: course ? course.course_name : 'Unknown Course',
             course_code: course ? course.course_code : 'N/A',
-            semester: course ? course.semester : 'N/A'
+            semester: course ? course.semester : 'N/A',
+            is_my_course: isMyCourse
           };
         });
         const enrichedTimetables = times.map(tt => {
@@ -74,6 +100,11 @@ const LessonPlanCreator = () => {
         setSyllabi(enrichedSyllabi);
         setCalendars(cals);
         setTimetables(enrichedTimetables);
+
+        // Default tab: if user has 'my' courses, show 'my', else 'other'
+        const hasMyCourses = enrichedSyllabi.some(s => s.is_my_course);
+        setSyllabusTab(hasMyCourses ? 'my' : 'other');
+
         if (cals.length > 0) {
           setProjectState(prev => ({ ...prev, calendarId: cals[0]._id || cals[0].id }));
         }
@@ -85,7 +116,7 @@ const LessonPlanCreator = () => {
       }
     };
     loadSyllabi();
-  }, []);
+  }, [user]);
 
   const handleSyllabusSelect = (syllabus) => {
     setProjectState(prev => ({
@@ -140,6 +171,15 @@ const LessonPlanCreator = () => {
           try {
             await schedulerService.generateSchedule(generated.course_id || projectState.courseCode, projectState.calendarId, projectState.timetableId);
             const updatedPlan = await lessonPlanService.getById(planId);
+            
+            // Re-attach scheduled sessions so preview table renders
+            const progressData = await schedulerService.getProgress(generated.course_id || projectState.courseCode).catch(()=>null);
+            if (progressData && progressData.sessions && progressData.sessions.length > 0) {
+              updatedPlan.sessions = progressData.sessions;
+            } else {
+              updatedPlan.sessions = generated.sessions;
+            }
+
             setProjectState(prev => ({
               ...prev,
               generatedPlan: updatedPlan
@@ -202,19 +242,49 @@ const LessonPlanCreator = () => {
   const renderStepContent = () => {
     switch (currentStep) {
       case 1:
+        const mySyllabi = syllabi.filter(s => s.is_my_course);
+        const otherSyllabi = syllabi.filter(s => !s.is_my_course);
+        const displayedSyllabi = syllabusTab === 'my' ? mySyllabi : otherSyllabi;
+
         return (
           <div className="step-content">
             <h3>Select a Syllabus</h3>
             <p className="text-secondary mb-4">Choose an uploaded syllabus to serve as the foundation for this lesson plan.</p>
             
-            {syllabi.length === 0 ? (
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '24px' }}>
+              <button
+                type="button"
+                className={`btn btn-sm ${syllabusTab === 'my' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ borderRadius: '20px', padding: '6px 18px', fontWeight: 600 }}
+                onClick={() => setSyllabusTab('my')}
+              >
+                My Courses ({mySyllabi.length})
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${syllabusTab === 'other' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ borderRadius: '20px', padding: '6px 18px', fontWeight: 600 }}
+                onClick={() => setSyllabusTab('other')}
+              >
+                Other Courses ({otherSyllabi.length})
+              </button>
+            </div>
+
+            {displayedSyllabi.length === 0 ? (
               <div className="empty-state">
-                <p>No syllabi available.</p>
-                <button className="btn btn-primary mt-2" onClick={() => navigate('/documents')}>Go to Documents to Upload</button>
+                <p>No syllabi found in {syllabusTab === 'my' ? 'My Courses' : 'Other Courses'}.</p>
+                {syllabusTab === 'my' && otherSyllabi.length > 0 && (
+                  <button className="btn btn-secondary btn-sm mt-2" onClick={() => setSyllabusTab('other')}>
+                    Switch to Other Courses ({otherSyllabi.length})
+                  </button>
+                )}
+                {syllabi.length === 0 && (
+                  <button className="btn btn-primary mt-2" onClick={() => navigate('/documents')}>Go to Documents to Upload</button>
+                )}
               </div>
             ) : (
               <div className="syllabus-grid">
-                {syllabi.map(syllabus => (
+                {displayedSyllabi.map(syllabus => (
                   <div 
                     key={syllabus._id || syllabus.id} 
                     className={`selection-card ${projectState.syllabusId === (syllabus._id || syllabus.id) ? 'selected' : ''}`}
@@ -241,9 +311,13 @@ const LessonPlanCreator = () => {
             
             <div className="ocr-review-panel" style={{ display: 'flex', gap: '24px' }}>
               <div className="ocr-preview" style={{ flex: 1, backgroundColor: '#f8fafc', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '24px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '300px' }}>
-                <FileText size={48} className="text-secondary mb-3" />
-                <p className="text-secondary">Document Preview</p>
-                <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>(Syllabus PDF Page 1)</p>
+                <div style={{ padding: '2rem', background: 'white', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', borderRadius: '8px', width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', border: '1px solid #e2e8f0' }}>
+                  <FileText size={48} className="text-secondary mb-3" style={{ color: '#cbd5e1' }} />
+                  <p className="text-secondary" style={{ fontWeight: 500, color: '#64748b' }}>Syllabus PDF Preview</p>
+                  <div style={{ width: '60%', height: '8px', background: '#e2e8f0', borderRadius: '4px', margin: '16px 0 8px' }}></div>
+                  <div style={{ width: '80%', height: '8px', background: '#e2e8f0', borderRadius: '4px', marginBottom: '8px' }}></div>
+                  <div style={{ width: '70%', height: '8px', background: '#e2e8f0', borderRadius: '4px' }}></div>
+                </div>
               </div>
               
               <div className="ocr-data" style={{ flex: 1, border: '1px solid var(--border-color)', borderRadius: '12px', padding: '24px' }}>
@@ -274,7 +348,7 @@ const LessonPlanCreator = () => {
             <div className="schedule-selection mt-4" style={{ display: 'flex', gap: '1rem', marginTop: '2rem', borderTop: '1px solid var(--border)', paddingTop: '1.5rem' }}>
               <div className="form-group" style={{ flex: 1 }}>
                 <label className="form-label">Academic Calendar (Optional)</label>
-                <select 
+                <CustomSelect 
                   className="form-control" 
                   value={projectState.calendarId} 
                   onChange={(e) => setProjectState(prev => ({...prev, calendarId: e.target.value}))}
@@ -285,11 +359,11 @@ const LessonPlanCreator = () => {
                       {cal.name || `${cal.academic_year} (Sem ${cal.semester})`}
                     </option>
                   ))}
-                </select>
+                </CustomSelect>
               </div>
               <div className="form-group" style={{ flex: 1 }}>
                 <label className="form-label">Faculty Timetable (Optional)</label>
-                <select 
+                <CustomSelect 
                   className="form-control" 
                   value={projectState.timetableId} 
                   onChange={(e) => setProjectState(prev => ({...prev, timetableId: e.target.value}))}
@@ -300,7 +374,7 @@ const LessonPlanCreator = () => {
                       {tt.name || `${tt.course_name || tt.course_id} (Sem ${tt.semester})`}
                     </option>
                   ))}
-                </select>
+                </CustomSelect>
               </div>
             </div>
 
