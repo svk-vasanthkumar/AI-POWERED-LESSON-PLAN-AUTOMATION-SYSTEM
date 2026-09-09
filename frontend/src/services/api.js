@@ -27,12 +27,12 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // Implement standard error extraction for UI
     let errorMessage = 'An unexpected error occurred';
     if (error.response) {
-      if (error.response.status === 401) {
+      // Only redirect on 401 if we're not already on the login page
+      if (error.response.status === 401 && !window.location.pathname.includes('/login')) {
         localStorage.removeItem('jwt_token');
-        window.location.href = '/login'; // Force redirect on unauthorized
+        window.location.href = '/login';
       }
       if (error.response.data && error.response.data.detail) {
         const detail = error.response.data.detail;
@@ -49,8 +49,7 @@ api.interceptors.response.use(
     } else if (error.request) {
       errorMessage = 'Network error. Please check your connection.';
     }
-    
-    // Attach extracted message to error object for easy access
+
     error.uiMessage = errorMessage;
     return Promise.reject(error);
   }
