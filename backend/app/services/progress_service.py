@@ -95,19 +95,55 @@ async def _resolve_faculty(db, faculty_id):
     return faculty
 
 
-async def _ensure_can_edit(db, current_user: dict, schedule: dict) -> None:
-    """Enforce RBAC ownership for session edits (Phase 4).
+async def _is_user_assigned_to_course(db, current_user: dict, course: dict) -> bool:
+    """
+    Check whether the current user is the assigned faculty (or owner) for a course.
+    Used for HOD/Admin users so they can only mutate progress for courses they teach.
+    """
+    user_email = (current_user.get("email") or "").strip().lower()
+    user_id = str(current_user.get("id") or current_user.get("sub") or "")
 
-    - admin / hod: always permitted.
-    - faculty: permitted only when their identity can be *safely* matched to
-      the schedule's faculty via a shared email (resolved from the faculty
-      collection). When that link cannot be established the faculty user is
-      denied rather than granted on an unsafe assumption — this is the
-      documented ownership limitation.
+    # Check direct faculty_id fields on the course document
+    for field in ("faculty_id", "assigned_faculty_id"):
+        fid = course.get(field)
+        if fid:
+            faculty = await _resolve_faculty(db, fid)
+            f_email = ((faculty or {}).get("email") or "").strip().lower()
+            if f_email and user_email and f_email == user_email:
+                return True
+
+    # Check array-based faculty_ids
+    for fid in (course.get("faculty_ids") or []):
+        faculty = await _resolve_faculty(db, fid)
+        f_email = ((faculty or {}).get("email") or "").strip().lower()
+        if f_email and user_email and f_email == user_email:
+            return True
+
+    return False
+
+
+async def _ensure_can_edit(db, current_user: dict, schedule: dict, course: dict | None = None) -> None:
+    """Enforce RBAC ownership for session edits.
+
+    - admin: always permitted (manages the whole system).
+    - hod: permitted ONLY when they are assigned/allotted to the course.
+           HODs that are not assigned are read-only monitors and may only
+           add HOD remarks via the dedicated endpoint.
+    - faculty: permitted only when their identity matches the schedule's faculty.
     """
     role = (current_user or {}).get("role")
-    if role in ("admin", "hod"):
+
+    if role == "admin":
         return
+
+    if role == "hod":
+        # HOD must be assigned to this specific course to modify sessions
+        if course and await _is_user_assigned_to_course(db, current_user, course):
+            return
+        raise ProgressPermissionError(
+            "You are not assigned to this course. "
+            "HODs may only view progress and add remarks for courses they do not teach."
+        )
 
     if role == "faculty":
         user_email = (current_user.get("email") or "").strip().lower()
@@ -294,7 +330,7 @@ async def update_session_status(
         raise ScheduleNotFoundError("Course not found")
 
     schedule = await _find_active_schedule_document(db, course_oid)
-    await _ensure_can_edit(db, current_user, schedule)
+    await _ensure_can_edit(db, current_user, schedule, course)
 
     sessions = schedule.get("sessions") or []
     index = _resolve_session_index(sessions, session_id)
@@ -315,19 +351,6 @@ async def update_session_status(
     if status_value == progress_engine.COMPLETED:
         if not remarks or not remarks.strip():
             raise SchedulerValidationError("Faculty remarks are mandatory when marking a session as complete.")
-
-        # RBAC constraint: Admins/HODs cannot complete another faculty's session
-        role = current_user.get("role")
-        if role in ("admin", "hod"):
-            user_email = (current_user.get("email") or "").strip().lower()
-            faculty = await _resolve_faculty(db, schedule.get("faculty_id"))
-            faculty_email = ((faculty or {}).get("email") or "").strip().lower()
-            # If changing from non-completed to completed, block if not owner
-            if current_status != progress_engine.COMPLETED:
-                if user_email and faculty_email and user_email != faculty_email:
-                    raise ProgressPermissionError(
-                        "Admins/HODs cannot mark a session complete for another faculty member"
-                    )
 
         _apply_completion(
             session,
@@ -359,6 +382,36 @@ async def update_session_status(
         {"_id": schedule["_id"]},
         {"$set": {"sessions": sessions, "updated_at": now}},
     )
+
+    try:
+        if status_value == progress_engine.COMPLETED:
+            from app.services.notification_service import dispatch_targeted_notification, resolve_department_hod
+            dept = course.get("department")
+            hod_recipients = await resolve_department_hod(dept, exclude_user_id=current_user["id"])
+            for hod_uid in hod_recipients:
+                await dispatch_targeted_notification(
+                    recipient_id=hod_uid,
+                    actor_id=current_user["id"],
+                    actor_name=current_user.get("name", "Faculty"),
+                    event_type="TOPIC_COMPLETED",
+                    entity_type="PROGRESS",
+                    entity_id=course_id,
+                    course_id=course_id,
+                    severity="SUCCESS",
+                    type="success",
+                    title="Topic Completed",
+                    message=f"Session topic '{session.get('topic', '')}' for {course.get('course_code', 'Course')} was marked completed by {current_user.get('name')}.",
+                    link="/progress",
+                    email_subject=f"Topic Completed: {course.get('course_code')}",
+                    metadata={
+                        "course_code": course.get("course_code"),
+                        "topic": session.get("topic"),
+                        "completed_by": current_user.get("name"),
+                        "remarks": remarks
+                    }
+                )
+    except Exception as e:
+        print(f"Failed to dispatch progress notification: {e}")
 
     session_out = dict(session)
     session_out.setdefault("session_id", index)
@@ -485,7 +538,7 @@ async def reschedule_session(
         raise ScheduleNotFoundError("Course not found")
 
     schedule = await _find_active_schedule_document(db, course_oid)
-    await _ensure_can_edit(db, current_user, schedule)
+    await _ensure_can_edit(db, current_user, schedule, course)
 
     sessions = schedule.get("sessions") or []
     index = _resolve_session_index(sessions, session_id)
@@ -572,8 +625,12 @@ async def reschedule_session(
     }
 
 
-async def get_course_progress(course_id: str) -> dict:
-    """Compute derived progress + deviations for a course (Phase 12)."""
+async def get_course_progress(course_id: str, current_user: dict | None = None) -> dict:
+    """Compute derived progress + deviations for a course (Phase 12).
+    
+    Returns an `is_assigned` flag so the frontend can decide whether action
+    buttons should be shown to HOD/Admin viewers who are not the course teacher.
+    """
     db = get_database()
     course_oid = to_object_id(course_id, field="course_id")
 
@@ -587,15 +644,184 @@ async def get_course_progress(course_id: str) -> dict:
     computed = progress_engine.compute_progress(sessions, _today())
     serialized = serialize_schedule(schedule)
 
+    # Determine if the current viewer is assigned/allotted to this course
+    is_assigned = True  # Faculty always treated as assigned (already enforced at edit level)
+    viewer_role = (current_user or {}).get("role")
+    if viewer_role in ("admin", "hod") and current_user:
+        is_assigned = await _is_user_assigned_to_course(db, current_user, course)
+
     return {
         "course_id": str(course_oid),
         "schedule_id": str(schedule["_id"]),
         "version": serialized.get("version"),
         "active": serialized.get("active"),
         "faculty_id": str(schedule.get("faculty_id")) if schedule.get("faculty_id") else None,
+        "is_assigned": is_assigned,
         "summary": computed["summary"],
         "units": computed["units"],
         "topics": computed["topics"],
         "deviations": computed["deviations"],
         "sessions": _attach_session_id(sessions),
+    }
+
+
+async def get_available_teaching_dates(course_id: str) -> list[dict]:
+    """Calculate all teachable dates from today to the end of the semester,
+    including available periods if the faculty has a period-based timetable.
+    """
+    db = get_database()
+    course_oid = to_object_id(course_id, field="course_id")
+
+    # Fetch course to get metadata for strict matching
+    course = await db.courses.find_one({"_id": course_oid})
+    if not course:
+        raise ValueError(f"Course not found: {course_id}")
+
+    # Construct target_subject exactly like generate_schedule does
+    target_subject = ",".join(
+        filter(
+            None,
+            [
+                course.get("course_name"),
+                course.get("short_form"),
+                course.get("course_code"),
+                course.get("short_name"),
+            ]
+        )
+    )
+
+    schedule = await _find_active_schedule_document(db, course_oid)
+    calendar = await _load_calendar_for_schedule(db, schedule)
+    timetable = await _load_timetable_for_schedule(db, schedule)
+
+    # Use semester start so faculty can mark past sessions complete
+    start_date = parse_date(calendar.get("semester_start"))
+    
+    end_date_str = calendar.get("last_working_day") or calendar.get("semester_end")
+    for event in calendar.get("events", []):
+        if event.get("type") == "last_working_day" and event.get("date"):
+            end_date_str = event.get("date")
+            break
+            
+    end_date = parse_date(end_date_str)
+
+    # We can use the existing teachable_days function from scheduler_engine
+    teachable = scheduler_engine.build_teachable_days(
+        calendar_model=calendar,
+        semester_start=start_date.isoformat(),
+        semester_end=end_date.isoformat(),
+    )
+
+    is_period_based = False
+    period_slots = {}
+    if timetable and timetable.get("schedule"):
+        schedule_slots = timetable["schedule"]
+        is_period_based = scheduler_engine.timetable_is_period_based(schedule_slots)
+        if is_period_based:
+            period_slots = scheduler_engine.build_period_slots_by_weekday(
+                schedule_slots,
+                target_subject=target_subject
+            )
+
+    available_dates = []
+    for dt, effective_weekday in teachable:
+        # If period based, only include days where the faculty actually has periods
+        periods = []
+        if is_period_based:
+            # Flatten tuples like [(1, 2), (3, 3)] into dicts
+            for p_start, p_end in period_slots.get(effective_weekday, []):
+                # Exclude lab hours (blocks where period spans more than 1 hour)
+                if p_start < p_end:
+                    continue
+                periods.append({"start": p_start, "end": p_end})
+            if not periods:
+                continue
+
+        available_dates.append({
+            "date": dt.isoformat(),
+            "weekday": WEEKDAYS[dt.weekday()],
+            "effective_weekday": effective_weekday,
+            "periods": periods
+        })
+
+    return available_dates
+
+
+async def add_hod_remark(
+    course_id: str,
+    session_id: str,
+    remark: str,
+    current_user: dict,
+) -> dict:
+    """Allow HOD to add a monitoring remark to any session without changing its status.
+
+    This is the HOD's read-only-monitor write action: they can annotate
+    sessions with supervisory feedback visible to the assigned faculty.
+    The session status is NEVER changed by this function.
+    """
+    role = (current_user or {}).get("role")
+    if role not in ("admin", "hod"):
+        raise ProgressPermissionError("Only HOD or Admin can add supervisory remarks.")
+
+    if not remark or not remark.strip():
+        raise SchedulerValidationError("Remark cannot be empty.")
+
+    db = get_database()
+    course_oid = to_object_id(course_id, field="course_id")
+
+    course = await db.courses.find_one({"_id": course_oid})
+    if not course:
+        raise ScheduleNotFoundError("Course not found")
+
+    schedule = await _find_active_schedule_document(db, course_oid)
+    sessions = schedule.get("sessions") or []
+    index = _resolve_session_index(sessions, session_id)
+    session = dict(sessions[index])
+
+    now = datetime.now(UTC)
+
+    # Append to a list of HOD remarks (preserves history)
+    hod_remarks = list(session.get("hod_remarks") or [])
+    hod_remarks.append({
+        "author_id": str(current_user.get("id") or current_user.get("sub") or ""),
+        "author_name": current_user.get("name", "HOD"),
+        "remark": remark.strip(),
+        "created_at": now.isoformat(),
+    })
+    session["hod_remarks"] = hod_remarks
+    session["updated_at"] = now.isoformat()
+    sessions[index] = session
+
+    await db.generated_schedules.update_one(
+        {"_id": schedule["_id"]},
+        {"$set": {"sessions": sessions, "updated_at": now}},
+    )
+
+    # Notify the faculty about the HOD's remark
+    try:
+        from app.services.notification_service import dispatch_targeted_notification, resolve_course_recipients
+        recipients = await resolve_course_recipients(course_id, exclude_user_id=str(current_user.get("id") or ""))
+        for uid in recipients:
+            await dispatch_targeted_notification(
+                recipient_id=uid,
+                actor_id=str(current_user.get("id") or current_user.get("sub") or ""),
+                actor_name=current_user.get("name", "HOD"),
+                event_type="HOD_REMARK_ADDED",
+                entity_type="PROGRESS",
+                entity_id=course_id,
+                course_id=course_id,
+                severity="INFO",
+                type="info",
+                title="HOD Feedback on Session Progress",
+                message=f"Your HOD left a remark on session '{session.get('topic', '')}' "
+                        f"for {course.get('course_code', 'this course')}: \"{remark.strip()[:80]}\"",
+                link=f"/progress/{course_id}",
+            )
+    except Exception:
+        pass  # Never block the remark save if notification fails
+
+    return {
+        "message": "Remark added successfully",
+        "session_id": session_id,
+        "hod_remarks": hod_remarks,
     }
