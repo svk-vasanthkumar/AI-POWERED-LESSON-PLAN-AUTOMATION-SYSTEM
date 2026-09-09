@@ -3,11 +3,13 @@ import { Users, Plus, X, Edit, Trash2, AlertCircle, Mail } from 'lucide-react';
 import { facultyService } from '../../services/facultyService';
 import { useAuth } from '../../context/AuthContext';
 import { useAlert } from '../../context/AlertContext';
+import PasswordStrength, { checkPasswordStrength } from '../../components/common/PasswordStrength';
+import CustomSelect from '../../components/common/CustomSelect';
 import './Faculty.css';
 
 const Faculty = () => {
   const { user } = useAuth();
-  const { showAlert } = useAlert();
+  const { showAlert, showConfirm } = useAlert();
   const [faculty, setFaculty] = useState([]);
   const [loading, setLoading] = useState(true);
   
@@ -61,6 +63,12 @@ const Faculty = () => {
     fetchData();
   }, []);
 
+  const formatFacultyId = (id) => id ? id.toUpperCase().trim() : '';
+  const formatFacultyName = (name) => {
+    if (!name) return '';
+    return name.replace(/\.([A-Za-z])/g, '. $1').replace(/\s+/g, ' ').trim();
+  };
+
   const handleChange = (e) => {
     setFormData({
       ...formData,
@@ -82,20 +90,38 @@ const Faculty = () => {
   };
 
   const handleDelete = async (id) => {
-    if (window.confirm('Are you sure you want to delete this faculty member?')) {
+    const confirmed = await showConfirm('Are you sure you want to delete this faculty member?', 'Delete Faculty');
+    if (confirmed) {
       try {
         await facultyService.delete(id);
-        await fetchData();
+        fetchData();
+        showAlert('Faculty deleted successfully', 'success');
       } catch (err) {
-        showAlert(err.uiMessage || 'Failed to delete faculty member.', 'error');
+        showAlert(err.response?.data?.detail || 'Failed to delete faculty member.', 'error');
       }
     }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setSaving(true);
     setError('');
+
+    // Check strong password policy if password is provided
+    if (!isEditing && formData.password) {
+      const { isStrong } = checkPasswordStrength(formData.password);
+      if (!isStrong) {
+        setError('Password does not meet all strong password requirements (8+ characters, uppercase, lowercase, digit, and special char).');
+        return;
+      }
+    } else if (isEditing && formData.password && formData.password.trim() !== '') {
+      const { isStrong } = checkPasswordStrength(formData.password);
+      if (!isStrong) {
+        setError('Password does not meet all strong password requirements (8+ characters, uppercase, lowercase, digit, and special char).');
+        return;
+      }
+    }
+
+    setSaving(true);
     
     try {
       if (isEditing) {
@@ -111,8 +137,10 @@ const Faculty = () => {
           updateData.password = formData.password;
         }
         await facultyService.update(currentFacultyId, updateData);
+        showAlert('Faculty member updated successfully', 'success');
       } else {
         await facultyService.create(formData);
+        showAlert('Faculty member created successfully', 'success');
       }
       await fetchData(); // Refresh list
       closeModal();
@@ -171,7 +199,8 @@ const Faculty = () => {
         )}
       </div>
 
-      <div className="table-container mt-4">
+      <div className="table-responsive mt-4">
+        <div className="table-container">
         <table className="data-table">
           <thead>
             <tr>
@@ -199,17 +228,17 @@ const Faculty = () => {
             ) : (
               faculty.map(f => (
                 <tr key={f._id || f.id}>
-                  <td className="font-medium">{f.faculty_id}</td>
-                  <td>{f.name}</td>
-                  <td>{f.email}</td>
-                  <td>{f.department}</td>
-                  <td>{f.designation}</td>
+                  <td data-label="Faculty ID" className="font-medium">{formatFacultyId(f.faculty_id)}</td>
+                  <td data-label="Name">{formatFacultyName(f.name)}</td>
+                  <td data-label="Email">{f.email}</td>
+                  <td data-label="Department">{f.department}</td>
+                  <td data-label="Designation">{f.designation}</td>
                   {(user?.role === 'admin' || user?.role === 'hod') && (
-                    <td>
+                    <td data-label="Actions">
                       <div className="action-buttons">
                         {f.has_logged_in === false && (
                           <button 
-                            className="btn-icon text-info" 
+                            className="btn-icon text-primary" 
                             onClick={() => handleSendEmail(f)} 
                             title="Send Welcome Email"
                           >
@@ -230,6 +259,7 @@ const Faculty = () => {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {showModal && (
@@ -248,7 +278,7 @@ const Faculty = () => {
                   </div>
                 )}
                 
-                <div className="form-row" style={{ display: 'flex', gap: '1rem' }}>
+                <div className="form-row">
                   <div className="form-group mb-4" style={{ flex: 1 }}>
                     <label className="form-label">Faculty ID</label>
                     <input 
@@ -259,10 +289,10 @@ const Faculty = () => {
                       onChange={handleChange}
                       placeholder="e.g. FAC001"
                       required
-                      minLength={6}
-                      maxLength={6}
-                      pattern=".{6}"
-                      title="Faculty ID must be exactly 6 characters"
+                      minLength={3}
+                      maxLength={10}
+                      pattern=".{3,10}"
+                      title="Faculty ID must be between 3 and 10 characters"
                     />
                   </div>
                   <div className="form-group mb-4" style={{ flex: 2 }}>
@@ -280,7 +310,7 @@ const Faculty = () => {
                   </div>
                 </div>
 
-                <div className="form-row" style={{ display: 'flex', gap: '1rem' }}>
+                <div className="form-row">
                   <div className="form-group mb-4" style={{ flex: 1 }}>
                     <label className="form-label">Email Address</label>
                     <input 
@@ -301,17 +331,18 @@ const Faculty = () => {
                         name="password"
                         value={formData.password || ''}
                         onChange={handleChange}
-                        placeholder={isEditing ? 'Leave blank to keep current' : 'Assign an initial password'}
+                        placeholder={isEditing ? 'Leave blank to keep current' : 'Min 8 chars (upper, lower, num, symbol)'}
                         required={!isEditing}
-                        minLength={6}
+                        minLength={8}
                       />
+                      <PasswordStrength password={formData.password} />
                     </div>
                 </div>
 
-                <div className="form-row" style={{ display: 'flex', gap: '1rem' }}>
+                <div className="form-row">
                   <div className="form-group mb-4" style={{ flex: 1 }}>
                     <label className="form-label">Department</label>
-                    <select 
+                    <CustomSelect 
                       className="form-control" 
                       name="department"
                       value={formData.department}
@@ -327,11 +358,11 @@ const Faculty = () => {
                       <option value="CIVIL">Civil Engineering</option>
                       <option value="AIDS">Artificial Intelligence and Data Science</option>
                       <option value="S&H">Science and Humanities</option>
-                    </select>
+                    </CustomSelect>
                   </div>
                   <div className="form-group mb-4" style={{ flex: 1 }}>
                     <label className="form-label">Designation</label>
-                    <select 
+                    <CustomSelect 
                       className="form-control" 
                       name="designation"
                       value={formData.designation}
@@ -344,7 +375,7 @@ const Faculty = () => {
                       <option value="Assistant Professor">Assistant Professor</option>
                       <option value="Lecturer">Lecturer</option>
                       <option value="HOD">Head of Department</option>
-                    </select>
+                    </CustomSelect>
                   </div>
                 </div>
               </div>
