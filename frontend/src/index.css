@@ -871,12 +871,20 @@ input[type="checkbox"].form-check-input:checked::after {
     font-size: 1rem !important;
   }
   
-  /* Table to Smart Card Conversion */
-  .table-responsive {
-    border: none;
-    background: transparent;
+  /* Table to Standalone Smart Card Conversion */
+  .table-responsive,
+  .table-scroll-wrapper,
+  .plans-table-wrapper,
+  .table-container {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    overflow: visible !important;
   }
-  .table-responsive .data-table {
+  .table-responsive .data-table,
+  .table-scroll-wrapper .data-table,
+  .plans-table-wrapper .data-table {
     min-width: 100% !important;
     display: block;
   }
@@ -896,8 +904,8 @@ input[type="checkbox"].form-check-input:checked::after {
     background: var(--surface-color);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-xl);
-    padding: 12px 0;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+    padding: 6px 0;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
     transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
   .data-table tr:hover {
@@ -905,13 +913,22 @@ input[type="checkbox"].form-check-input:checked::after {
     box-shadow: 0 8px 24px rgba(79, 70, 229, 0.08);
   }
   .data-table td {
-    border-bottom: none;
-    padding: 8px 16px;
+    border-bottom: 1px solid var(--border-color);
+    padding: 10px 16px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 16px;
     text-align: right;
+  }
+  .data-table td:last-child {
+    border-bottom: none;
+  }
+  .data-table td.text-center,
+  .data-table td[colspan] {
+    justify-content: center;
+    text-align: center;
+    border-bottom: none;
   }
   /* Pseudo-element for mobile labels */
   .data-table td::before {

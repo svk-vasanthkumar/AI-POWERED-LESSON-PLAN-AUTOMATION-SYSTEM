@@ -117,6 +117,14 @@
     flex: 1;
     justify-content: center;
   }
+
+  .plans-table-wrapper,
+  .plans-table-wrapper .table-container {
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
+  }
 }
 
 @media (max-width: 480px) {

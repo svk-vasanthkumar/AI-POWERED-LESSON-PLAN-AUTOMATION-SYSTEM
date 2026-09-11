@@ -154,6 +154,14 @@
   .stat-value {
     font-size: 1.5rem;
   }
+
+  .table-scroll-wrapper,
+  .table-scroll-wrapper .table-container {
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
+  }
 }
 
 @media (max-width: 540px) {
@@ -177,8 +185,4 @@
   .stat-value { font-size: 1.25rem; }
   .stat-icon-wrapper { width: 32px; height: 32px; }
   .stat-icon-wrapper svg { width: 16px; height: 16px; }
-  
-  .table-scroll-wrapper .data-table {
-    min-width: 540px; /* force horizontal scroll */
-  }
 }
