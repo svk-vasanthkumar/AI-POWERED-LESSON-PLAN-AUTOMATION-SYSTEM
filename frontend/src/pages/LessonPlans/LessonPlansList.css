@@ -60,7 +60,6 @@
 /* ── Table scroll wrapper ─────────────────────────────────────────── */
 .plans-table-wrapper {
   overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-color);
   background: var(--surface-color);
