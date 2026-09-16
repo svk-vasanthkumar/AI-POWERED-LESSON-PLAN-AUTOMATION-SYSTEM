@@ -104,6 +104,21 @@ const Courses = () => {
     setSaving(true);
     setError('');
     
+    // Custom Validations
+    const courseNameRegex = /^[A-Za-z\s\-&]+$/;
+    if (!courseNameRegex.test(formData.course_name)) {
+      setError('Course Name should only contain letters, spaces, hyphens (-), and ampersands (&). Numbers and other special characters are not allowed.');
+      setSaving(false);
+      return;
+    }
+
+    const academicYearRegex = /^\d{4}-\d{4}$/;
+    if (!academicYearRegex.test(formData.academic_year)) {
+      setError('Academic Year must be in the format YYYY-YYYY (e.g., 2026-2027). Letters and other formats are not allowed.');
+      setSaving(false);
+      return;
+    }
+    
     try {
       if (isEditing) {
         if (formData.duplicate_course) {
