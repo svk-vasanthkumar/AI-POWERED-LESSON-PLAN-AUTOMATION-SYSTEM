@@ -635,7 +635,13 @@ const DocumentPreview = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.schedule.map((item, index) => (
+                  {[...data.schedule].sort((a, b) => {
+                    const days = { monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6, sunday: 7 };
+                    const dayA = a.day_order || days[(a.day || '').toLowerCase()] || 99;
+                    const dayB = b.day_order || days[(b.day || '').toLowerCase()] || 99;
+                    if (dayA !== dayB) return dayA - dayB;
+                    return (a.period_start || 0) - (b.period_start || 0);
+                  }).map((item, index) => (
                     <tr key={index}>
                       <td className="font-medium capitalize">{item.day}</td>
                       <td>
