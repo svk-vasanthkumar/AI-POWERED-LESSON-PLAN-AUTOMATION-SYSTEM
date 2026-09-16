@@ -269,8 +269,8 @@ body.dark-theme .nav-link.active {
 .topbar {
   height: 64px;
   background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(16px) saturate(180%);
   -webkit-backdrop-filter: blur(16px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
   border-bottom: 1px solid var(--border-color);
   display: flex;
   align-items: center;
@@ -454,8 +454,8 @@ body.dark-theme .topbar {
   position: fixed;
   inset: 0;
   background: rgba(10, 12, 28, 0.5);
-  backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
   z-index: 40;
   opacity: 0;
   transition: opacity 0.3s var(--ease-out);
