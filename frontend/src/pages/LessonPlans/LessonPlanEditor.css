@@ -213,6 +213,7 @@ select.inline-input {
   cursor: pointer;
   font-size: 13px;
   color: var(--text-primary);
+  -webkit-user-select: none;
   user-select: none;
 }
 .border { border: 1px solid var(--border-color, #e2e8f0); }
