@@ -120,3 +120,23 @@
     grid-template-columns: 1fr;
   }
 }
+
+@media (max-width: 480px) {
+  .documents-grid {
+    gap: 16px;
+  }
+  
+  .document-card {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 16px;
+  }
+  
+  .doc-actions {
+    width: 100%;
+    justify-content: flex-end;
+    margin-top: 8px;
+    border-top: 1px solid var(--border-color);
+    padding-top: 12px;
+  }
+}

@@ -2,18 +2,23 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 
 from app.auth.dependencies import get_current_user
-from app.schemas.notification_schema import NotificationResponse
+from app.schemas.notification_schema import NotificationResponse, PushSubscriptionSchema
 from app.services.notification_service import (
     get_user_notifications,
     mark_as_read,
     mark_all_as_read,
 )
+from app.services.auth_service import add_push_subscription
 
 router = APIRouter(
     prefix="/notifications",
     tags=["Notifications"],
     dependencies=[Depends(get_current_user)],
 )
+
+@router.post("/subscribe")
+async def subscribe_push(subscription: PushSubscriptionSchema, current_user: dict = Depends(get_current_user)):
+    return await add_push_subscription(current_user["email"], subscription.model_dump())
 
 @router.get("/", response_model=List[NotificationResponse])
 async def get_notifications(limit: int = 50, current_user: dict = Depends(get_current_user)):

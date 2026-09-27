@@ -54,6 +54,8 @@ async def get_faculty_workload(current_user: dict = Depends(get_current_user)):
     workload.sort(key=lambda x: x["course_count"], reverse=True)
     return workload
 
+from app.services.progress_service import get_course_progress as compute_real_course_progress
+
 @router.get("/course-progress")
 async def get_course_progress(current_user: dict = Depends(get_current_user)):
     db = get_database()
@@ -77,28 +79,42 @@ async def get_course_progress(current_user: dict = Depends(get_current_user)):
         cid = course["_id"]
         cid_str = str(cid)
         
-        # Check components
+        real_percentage = 0
+        status = "Not Started"
+        
+        # Check components first for fallback tracking
         has_syllabus = await db.syllabi.find_one({"course_id": {"$in": [cid, cid_str]}}) is not None
         has_timetable = await db.timetables.find_one({"course_id": {"$in": [cid, cid_str]}}) is not None
         has_lesson_plan = await db.lesson_plans.find_one({"course_id": {"$in": [cid, cid_str]}}) is not None
-        
-        completed = sum([has_syllabus, has_timetable, has_lesson_plan])
-        percentage = round((completed / 3) * 100)
-        
-        status = "Not Started"
-        if percentage == 100:
-            status = "Ready"
-        elif percentage > 0:
-            status = "In Progress"
+
+        try:
+            real_progress = await compute_real_course_progress(cid_str)
+            summary = real_progress.get("summary", {})
+            real_percentage = summary.get("completion_percentage", 0)
+            if real_percentage == 100:
+                status = "Completed"
+            elif real_percentage > 0:
+                status = "In Progress"
+            else:
+                status = "Ready to Execute"
+        except Exception:
+            # If no schedule exists, we fallback to checking setup progress
+            completed = sum([has_syllabus, has_timetable, has_lesson_plan])
+            if completed == 3:
+                status = "Ready for Schedule"
+                # Keep real_percentage at 0 since no sessions have executed
+            elif completed > 0:
+                status = "Setup in Progress"
             
         progress_list.append({
+            "course_id": cid_str,
             "course_name": course.get("course_name", "Unknown"),
             "course_code": course.get("course_code", "Unknown"),
-            "progress_percentage": percentage,
+            "progress_percentage": real_percentage,
             "status": status,
-            "has_syllabus": has_syllabus,
-            "has_timetable": has_timetable,
-            "has_lesson_plan": has_lesson_plan
+            "has_syllabus": has_syllabus if 'has_syllabus' in locals() else True,
+            "has_timetable": has_timetable if 'has_timetable' in locals() else True,
+            "has_lesson_plan": has_lesson_plan if 'has_lesson_plan' in locals() else True
         })
         
     # Sort by progress descending
@@ -128,17 +144,28 @@ async def get_co_coverage(current_user: dict = Depends(get_current_user)):
     total_defined_cos_all = 0
     total_covered_cos_all = 0
     
+    # Keep track of the latest lesson plan per course
+    latest_plans = {}
     async for plan in lesson_plans_cursor:
-        structured = plan.get("lesson_plan", {})
+        course_id = str(plan.get("course_id"))
+        if not course_id:
+            continue
         
-        # Depending on how it's stored, it might be structured_plan or lesson_plan
-        if not structured and "structured_plan" in plan:
-            structured = plan["structured_plan"]
-            
-        if not structured:
+        # If we already have a plan for this course, prefer the one with a newer created_at
+        current_date = plan.get("created_at")
+        if course_id in latest_plans:
+            existing_date = latest_plans[course_id].get("created_at")
+            if existing_date and current_date and current_date > existing_date:
+                latest_plans[course_id] = plan
+        else:
+            latest_plans[course_id] = plan
+
+    for course_id, plan in latest_plans.items():
+        structured = plan.get("structured_plan")
+        if not structured or not isinstance(structured, dict):
             continue
             
-        course_name = structured.get("course_title", plan.get("course_name", "Unknown Course"))
+        course_name = structured.get("course_title", "Unknown Course")
         
         defined_cos = structured.get("learning_outcomes", [])
         total_defined = len(defined_cos)
@@ -146,6 +173,13 @@ async def get_co_coverage(current_user: dict = Depends(get_current_user)):
         if total_defined == 0:
             continue
             
+        defined_co_ids = set()
+        for co in defined_cos:
+            if isinstance(co, dict):
+                defined_co_ids.add(co.get("outcome_id", "Unknown"))
+            else:
+                defined_co_ids.add(str(co))
+                
         # Extract covered COs from units -> topics
         covered_co_ids = set()
         units = structured.get("units", [])
@@ -156,16 +190,22 @@ async def get_co_coverage(current_user: dict = Depends(get_current_user)):
                 for outcome in outcomes:
                     covered_co_ids.add(outcome)
                     
-        total_covered = len(covered_co_ids)
+        # Find which of the defined COs are actually covered
+        actual_covered = covered_co_ids.intersection(defined_co_ids)
+        total_covered = len(actual_covered)
+        missing_co_ids = defined_co_ids - covered_co_ids
         
         # Calculate percentage for this course
         coverage_percentage = (total_covered / total_defined) * 100 if total_defined > 0 else 0
         
         course_coverage.append({
+            "course_id": course_id,
             "course_name": course_name,
             "total_cos": total_defined,
             "covered_cos": total_covered,
-            "coverage_percentage": round(coverage_percentage, 1)
+            "coverage_percentage": round(coverage_percentage, 1),
+            "covered_co_list": sorted(list(actual_covered)),
+            "missing_co_list": sorted(list(missing_co_ids))
         })
         
         total_defined_cos_all += total_defined

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { authService } from '../../services/authService';
 import { BookOpen, CheckCircle } from 'lucide-react';
+import PasswordStrength, { checkPasswordStrength } from '../../components/common/PasswordStrength';
 import './Login.css';
 
 const ResetPassword = () => {
@@ -36,8 +37,9 @@ const ResetPassword = () => {
       return;
     }
     
-    if (newPassword.length < 6) {
-      setError("Password must be at least 6 characters.");
+    const { isStrong } = checkPasswordStrength(newPassword);
+    if (!isStrong) {
+      setError("Password does not meet all strength criteria below.");
       return;
     }
 
@@ -79,16 +81,17 @@ const ResetPassword = () => {
               <input 
                 type="password" 
                 required
-                placeholder="••••••••"
+                placeholder="Min. 8 characters"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 className="form-control"
-                minLength={6}
+                minLength={8}
                 disabled={!token}
               />
+              <PasswordStrength password={newPassword} />
             </div>
             
-            <div className="form-group">
+            <div className="form-group" style={{ marginTop: '1rem' }}>
               <label>Confirm New Password</label>
               <input 
                 type="password" 
@@ -97,7 +100,7 @@ const ResetPassword = () => {
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 className="form-control"
-                minLength={6}
+                minLength={8}
                 disabled={!token}
               />
             </div>

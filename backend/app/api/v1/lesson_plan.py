@@ -31,12 +31,20 @@ router = APIRouter(
 
 
 def _serialize_lesson(lesson: dict) -> dict:
-    """Stringify ObjectId fields for a JSON-safe response."""
+    """Stringify ObjectId fields and normalize missing fields for a JSON-safe response."""
     lesson["_id"] = str(lesson["_id"])
     if "syllabus_id" in lesson:
         lesson["syllabus_id"] = str(lesson["syllabus_id"])
     if "course_id" in lesson:
         lesson["course_id"] = str(lesson["course_id"])
+    # Normalize status so the frontend always has a valid string
+    if not lesson.get("status"):
+        lesson["status"] = "Draft"
+    # Serialize datetime fields to ISO strings
+    for field in ("created_at", "updated_at"):
+        val = lesson.get(field)
+        if val is not None and hasattr(val, "isoformat"):
+            lesson[field] = val.isoformat()
     return lesson
 
 
@@ -156,6 +164,17 @@ async def update_lesson_plan(
         update_data["lesson_plan"] = data.lesson_plan
     if data.sessions is not None:
         update_data["sessions"] = data.sessions
+    if data.approval_remarks is not None:
+        update_data["approval_remarks"] = data.approval_remarks
+
+    # Validate remarks for Approve/Reject
+    if data.status in ["Approved", "Rejected"]:
+        if not data.approval_remarks and not lesson.get("approval_remarks"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Approval remarks are compulsory when approving or rejecting a lesson plan."
+            )
+
     if data.status is not None:
         update_data["status"] = data.status
 
@@ -165,16 +184,96 @@ async def update_lesson_plan(
             {"$set": update_data},
         )
         
-        # Send notification if approved
-        if data.status == "Approved" and lesson.get("status") != "Approved":
-            course = await db.courses.find_one({"_id": lesson["course_id"]})
-            if course and "faculty_id" in course:
-                from app.services.notification_service import create_notification
-                await create_notification(
-                    user_id=str(course["faculty_id"]),
-                    title="Lesson Plan Approved",
-                    message=f"The lesson plan for {course['course_code']} has been approved.",
-                    type="success"
+        old_status = lesson.get("status")
+        
+        # Targeted Notifications
+        from app.services.notification_service import dispatch_targeted_notification, resolve_course_recipients, resolve_department_hod
+        
+        course_id_str = str(lesson.get("course_id", ""))
+        course = await db.courses.find_one({"_id": lesson.get("course_id")})
+        if not course and course_id_str:
+            course = await db.courses.find_one({"id": course_id_str})
+            
+        course_code = course.get("course_code", "Course") if course else "Course"
+        course_name = course.get("course_name", "") if course else ""
+
+        # 1. When faculty submits for approval -> Notify Department HOD
+        if data.status == "Pending Approval" and data.status != old_status:
+            dept = course.get("department") if course else current_user.get("department")
+            hod_recipients = await resolve_department_hod(dept, exclude_user_id=current_user["id"])
+            for hod_uid in hod_recipients:
+                await dispatch_targeted_notification(
+                    recipient_id=hod_uid,
+                    actor_id=current_user["id"],
+                    actor_name=current_user.get("name", "Faculty"),
+                    event_type="LESSON_PLAN_SUBMITTED",
+                    entity_type="LESSON_PLAN",
+                    entity_id=lesson_id,
+                    course_id=course_id_str,
+                    severity="INFO",
+                    type="info",
+                    title="Lesson Plan Pending Approval",
+                    message=f"A lesson plan for {course_code} ({course_name}) has been submitted for approval by {current_user.get('name', 'Faculty')}.",
+                    link=f"/lesson-plans/edit/{lesson_id}",
+                    email_subject=f"Lesson Plan Pending Approval: {course_code}",
+                    metadata={
+                        "course_code": course_code,
+                        "course_name": course_name,
+                        "submitted_by": current_user.get("name", "Faculty"),
+                        "status": "Pending Approval"
+                    }
+                )
+                
+        # 2. When HOD approves or rejects -> Notify Faculty Owner(s)
+        elif data.status in ["Approved", "Rejected"] and data.status != old_status:
+            course_recipients = await resolve_course_recipients(course_id_str, exclude_user_id=current_user["id"])
+            for fac_uid in course_recipients:
+                await dispatch_targeted_notification(
+                    recipient_id=fac_uid,
+                    actor_id=current_user["id"],
+                    actor_name=current_user.get("name", "HOD"),
+                    event_type=f"LESSON_PLAN_{data.status.upper()}",
+                    entity_type="LESSON_PLAN",
+                    entity_id=lesson_id,
+                    course_id=course_id_str,
+                    severity="SUCCESS" if data.status == "Approved" else "ERROR",
+                    type="success" if data.status == "Approved" else "warning",
+                    title=f"Lesson Plan {data.status}",
+                    message=f"Your lesson plan for {course_code} ({course_name}) has been {data.status.lower()} by {current_user.get('name', 'HOD')}.\nRemarks: {data.approval_remarks}",
+                    link=f"/lesson-plans/edit/{lesson_id}",
+                    email_subject=f"Lesson Plan {data.status}: {course_code}",
+                    metadata={
+                        "course_code": course_code,
+                        "course_name": course_name,
+                        "status": data.status,
+                        "approval_remarks": data.approval_remarks,
+                        "reviewed_by": current_user.get("name", "HOD")
+                    }
+                )
+
+        # 3. When HOD/Admin edits another faculty's plan (without status change) -> Notify Faculty
+        elif not data.status and current_user.get("role") in ["hod", "admin"]:
+            course_recipients = await resolve_course_recipients(course_id_str, exclude_user_id=current_user["id"])
+            for fac_uid in course_recipients:
+                await dispatch_targeted_notification(
+                    recipient_id=fac_uid,
+                    actor_id=current_user["id"],
+                    actor_name=current_user.get("name", "Manager"),
+                    event_type="LESSON_PLAN_UPDATED",
+                    entity_type="LESSON_PLAN",
+                    entity_id=lesson_id,
+                    course_id=course_id_str,
+                    severity="INFO",
+                    type="info",
+                    title="Lesson Plan Updated",
+                    message=f"Your lesson plan for {course_code} ({course_name}) was modified by {current_user.get('name')}.",
+                    link=f"/lesson-plans/edit/{lesson_id}",
+                    email_subject=f"Lesson Plan Updated: {course_code}",
+                    metadata={
+                        "course_code": course_code,
+                        "course_name": course_name,
+                        "updated_by": current_user.get("name")
+                    }
                 )
 
     return {"message": "Lesson plan updated successfully"}

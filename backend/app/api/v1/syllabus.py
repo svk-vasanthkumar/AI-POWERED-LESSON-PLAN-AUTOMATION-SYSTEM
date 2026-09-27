@@ -47,10 +47,30 @@ async def upload_syllabus(
         db, current_user, to_object_id(course_id, field="course_id")
     )
 
-    return await save_uploaded_file(
+    result = await save_uploaded_file(
         course_id=course_id,
         file=file,
     )
+
+    try:
+        from app.services.notification_service import dispatch_targeted_notification
+        from app.config.logger import logger
+        await dispatch_targeted_notification(
+            event_type="SYLLABUS_UPLOADED",
+            actor_id=str(current_user["_id"]),
+            actor_name=current_user.get("full_name") or current_user.get("username", "User"),
+            entity_type="syllabus",
+            entity_id=str(result.get("syllabus_id")) if result.get("syllabus_id") else None,
+            course_id=course_id,
+            title="Syllabus Uploaded",
+            message=f"Syllabus document '{file.filename}' was uploaded.",
+            severity="INFO",
+            link=f"/syllabus/{result.get('syllabus_id')}" if result.get("syllabus_id") else "/syllabus",
+        )
+    except Exception as e:
+        pass
+
+    return result
 
 
 @router.get("/")

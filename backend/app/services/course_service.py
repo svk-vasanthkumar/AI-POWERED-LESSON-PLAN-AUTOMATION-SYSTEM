@@ -119,7 +119,8 @@ async def create_course(data):
                 user_id=str(faculty["user_id"]),
                 title="New Course Assigned",
                 message=f"You have been assigned to teach {data.course_name} ({data.course_code}).",
-                type="info"
+                type="info",
+                link="/courses"
             )
 
     return str(result.inserted_id)
@@ -308,7 +309,8 @@ async def clone_course(course_id: str, new_faculty_ids: list[str], new_academic_
                 user_id=str(faculty["user_id"]),
                 title="Course Reassigned",
                 message=f"You have been assigned to teach {course['course_name']} ({course['course_code']}) for the {new_academic_year} academic year.",
-                type="info"
+                type="info",
+                link="/courses"
             )
             
     return str(new_course_id)

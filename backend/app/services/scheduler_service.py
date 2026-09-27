@@ -571,6 +571,33 @@ async def generate_schedule(
     result = await db.generated_schedules.insert_one(document)
     document["_id"] = result.inserted_id
 
+    try:
+        from app.services.notification_service import dispatch_targeted_notification, resolve_course_recipients
+        recipients = await resolve_course_recipients(str(course_oid))
+        for uid in recipients:
+            await dispatch_targeted_notification(
+                recipient_id=uid,
+                event_type="SCHEDULE_GENERATED",
+                entity_type="SCHEDULE",
+                entity_id=str(result.inserted_id),
+                course_id=str(course_oid),
+                severity="SUCCESS",
+                type="success",
+                title="Schedule Generated",
+                message=f"A new schedule (v{next_version}) with {len(sessions)} sessions was generated for {course.get('course_code', '')} ({course.get('course_name', '')}).",
+                link=f"/lesson-plans/edit/{lesson.get('_id')}",
+                email_subject=f"Schedule Generated: {course.get('course_code')}",
+                metadata={
+                    "course_code": course.get("course_code"),
+                    "course_name": course.get("course_name"),
+                    "version": next_version,
+                    "total_sessions": len(sessions),
+                    "total_hours": total_hours
+                }
+            )
+    except Exception as e:
+        print(f"Failed to dispatch schedule notification: {e}")
+
     payload = serialize_schedule(document)
     payload["workload"] = {
         "faculty_id": str(faculty_id) if faculty_id is not None else None,

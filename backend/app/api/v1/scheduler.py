@@ -11,9 +11,11 @@ from app.services.export_service import (
 from app.services.progress_service import (
     ProgressPermissionError,
     SessionNotFoundError,
+    get_available_teaching_dates,
     get_course_progress,
     reschedule_session,
     update_session_status,
+    add_hod_remark,
 )
 from app.services.scheduler_engine import (
     ScheduleConflictError,
@@ -217,13 +219,55 @@ async def reschedule_session_endpoint(
 
 
 @router.get("/{course_id}/progress")
-async def get_progress(course_id: str):
-    """Return derived course/syllabus progress + deviations (Phase 12)."""
+async def get_progress(course_id: str, current_user: dict = Depends(get_current_user)):
+    """Return derived course/syllabus progress + deviations. Includes is_assigned flag."""
     try:
-        return await get_course_progress(course_id)
+        return await get_course_progress(course_id, current_user=current_user)
 
     except ScheduleNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.post("/{course_id}/sessions/{session_id}/hod-remark")
+async def add_hod_remark_endpoint(
+    course_id: str,
+    session_id: str,
+    payload: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """HOD/Admin adds a supervisory monitoring remark to a session without changing its status."""
+    from pydantic import BaseModel
+
+    remark = payload.get("remark", "").strip()
+    try:
+        return await add_hod_remark(
+            course_id=course_id,
+            session_id=session_id,
+            remark=remark,
+            current_user=current_user,
+        )
+    except ProgressPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except ScheduleNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except SessionNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except SchedulerValidationError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+
+
+@router.get("/{course_id}/available-dates")
+async def get_available_dates(course_id: str):
+    """Return all valid teaching dates and available periods for the faculty."""
+    try:
+        dates = await get_available_teaching_dates(course_id)
+        return {"dates": dates}
+    except ScheduleNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except SchedulerValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+        )
 
 
 # ---------------------------------------------------------------------------

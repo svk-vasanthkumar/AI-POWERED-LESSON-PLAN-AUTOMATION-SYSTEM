@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Save, ArrowLeft, Download, CheckCircle, Clock, Calendar, X, Plus, Trash2 } from 'lucide-react';
+import { Save, ArrowLeft, Download, CheckCircle, Clock, Calendar, X, Plus, Trash2, Send, XCircle, MessageSquare, FileText, FileSpreadsheet } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useAlert } from '../../context/AlertContext';
 import { lessonPlanService } from '../../services/lessonPlanService';
@@ -9,17 +9,26 @@ import { academicCalendarService } from '../../services/academicCalendarService'
 import { timetableService } from '../../services/timetableService';
 import { facultyService } from '../../services/facultyService';
 import { schedulerService } from '../../services/schedulerService';
+import CustomSelect from '../../components/common/CustomSelect';
 import './LessonPlanEditor.css';
 
 const LessonPlanEditor = () => {
   const { user } = useAuth();
-  const { id } = useParams();
+  const params = useParams();
+  const rawId = params.id || params.courseId;
   const navigate = useNavigate();
   const { showAlert } = useAlert();
   const [plan, setPlan] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [isOwnerOrAdmin, setIsOwnerOrAdmin] = useState(false);
+
+  const activeId = plan?._id || plan?.id || rawId;
   
+  const [showRemarksModal, setShowRemarksModal] = useState(false);
+  const [remarksAction, setRemarksAction] = useState('');
+  const [approvalRemarks, setApprovalRemarks] = useState('');
+
   // Create a local copy of sessions for editing
   const [sessions, setSessions] = useState([]);
 
@@ -43,12 +52,56 @@ const LessonPlanEditor = () => {
     const fetchPlan = async () => {
       try {
         setLoading(true);
-        const [data, courses] = await Promise.all([
-          lessonPlanService.getById(id),
-          courseService.getAll().catch(e => { console.error(e); return []; })
+        let data;
+        try {
+          data = await lessonPlanService.getById(rawId);
+        } catch (err) {
+          if (params.id && params.courseId && rawId !== params.courseId) {
+            data = await lessonPlanService.getById(params.courseId);
+          } else {
+            throw err;
+          }
+        }
+        
+        const [courses, faculties] = await Promise.all([
+          courseService.getAll().catch(e => { console.error(e); return []; }),
+          facultyService.getAll().catch(e => { console.error(e); return []; })
         ]);
         
+        let progress = null;
+        try {
+          if (data.course_id) {
+            progress = await schedulerService.getProgress(data.course_id);
+          }
+        } catch (e) {
+          // It's okay if no schedule/progress exists yet
+          progress = null;
+        }
+        
         const course = courses.find(c => c._id === data.course_id || c.id === data.course_id);
+        const currentUserId = user?.id || user?._id;
+        const isAdmin = user?.role === 'admin';
+        
+        // Find faculty profile for the currently logged in user
+        const currentUserFaculty = faculties.find(f => 
+          (f.user_id && currentUserId && String(f.user_id) === String(currentUserId)) ||
+          (f.email && user?.email && f.email.toLowerCase() === user.email.toLowerCase())
+        );
+
+        const courseFacultyIds = Array.isArray(course?.faculty_ids) && course.faculty_ids.length > 0
+          ? course.faculty_ids 
+          : (course?.faculty_id ? [course.faculty_id] : (course?.assigned_faculty_id ? [course.assigned_faculty_id] : []));
+
+        const isOwner = courseFacultyIds.some(fid => 
+          String(fid) === String(currentUserId) ||
+          (currentUserFaculty && (String(fid) === String(currentUserFaculty._id) || String(fid) === String(currentUserFaculty.id) || String(fid) === String(currentUserFaculty.faculty_id)))
+        ) || (data.faculty_id && (
+          String(data.faculty_id) === String(currentUserId) ||
+          (currentUserFaculty && (String(data.faculty_id) === String(currentUserFaculty._id) || String(data.faculty_id) === String(currentUserFaculty.id) || String(data.faculty_id) === String(currentUserFaculty.faculty_id)))
+        ));
+
+        setIsOwnerOrAdmin(Boolean(isOwner));
+
         const enrichedPlan = {
           ...data,
           course_name: course ? course.course_name : 'Unknown Course',
@@ -79,6 +132,26 @@ const LessonPlanEditor = () => {
           });
         }
         
+        if (progress && progress.sessions) {
+          const executionMap = {};
+          progress.sessions.forEach(s => {
+            if (s.topic_id && s.status && s.status !== 'pending') {
+              executionMap[s.topic_id] = {
+                status: s.status,
+                executed_date: s.executed_date,
+                actual_hours: s.actual_hours,
+                faculty_remarks: s.faculty_remarks
+              };
+            }
+          });
+          initialSessions = initialSessions.map(session => {
+            if (session.topic_id && executionMap[session.topic_id]) {
+              return { ...session, execution: executionMap[session.topic_id] };
+            }
+            return session;
+          });
+        }
+        
         setPlan(enrichedPlan);
         setSessions(initialSessions);
       } catch (error) {
@@ -89,10 +162,10 @@ const LessonPlanEditor = () => {
       }
     };
     
-    if (id) {
+    if (rawId) {
       fetchPlan();
     }
-  }, [id]);
+  }, [rawId]);
 
   const handleSessionChange = (index, field, value) => {
     const newSessions = [...sessions];
@@ -138,9 +211,9 @@ const LessonPlanEditor = () => {
     try {
       setSaving(true);
       let blob;
-      if (format === 'pdf') blob = await lessonPlanService.exportPdf(id);
-      else if (format === 'docx') blob = await lessonPlanService.exportDocx(id);
-      else if (format === 'xlsx') blob = await lessonPlanService.exportXlsx(id);
+      if (format === 'pdf') blob = await lessonPlanService.exportPdf(activeId);
+      else if (format === 'docx') blob = await lessonPlanService.exportDocx(activeId);
+      else if (format === 'xlsx') blob = await lessonPlanService.exportXlsx(activeId);
       
       const url = window.URL.createObjectURL(new Blob([blob]));
       const link = document.createElement('a');
@@ -160,8 +233,14 @@ const LessonPlanEditor = () => {
   const handleSave = async () => {
     try {
       setSaving(true);
-      const payload = { ...plan, sessions };
-      await lessonPlanService.update(id, payload);
+      // Revert to Draft if edits are made to a submitted/processed plan
+      let newStatus = plan.status;
+      if (['Approved', 'Rejected', 'Pending Approval'].includes(plan.status)) {
+        newStatus = 'Draft';
+      }
+      const payload = { ...plan, sessions, status: newStatus };
+      await lessonPlanService.update(activeId, payload);
+      setPlan(payload);
       showAlert("Lesson plan saved successfully!", "success");
     } catch (error) {
       console.error("Failed to save:", error);
@@ -171,16 +250,43 @@ const LessonPlanEditor = () => {
     }
   };
 
-  const handleApprove = async () => {
+  const handleSubmitForApproval = async () => {
     try {
       setSaving(true);
-      const payload = { ...plan, sessions, status: 'Approved' };
-      await lessonPlanService.update(id, payload);
+      const payload = { ...plan, sessions, status: 'Pending Approval' };
+      await lessonPlanService.update(activeId, payload);
       setPlan(payload);
-      showAlert("Lesson plan approved!", "success");
+      showAlert("Lesson plan submitted for approval!", "success");
     } catch (error) {
-      console.error("Failed to approve:", error);
-      showAlert("Failed to approve lesson plan.", "error");
+      console.error("Failed to submit:", error);
+      showAlert("Failed to submit lesson plan.", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openRemarksModal = (action) => {
+    setRemarksAction(action);
+    setApprovalRemarks('');
+    setShowRemarksModal(true);
+  };
+
+  const handleApprovalSubmit = async (e) => {
+    e.preventDefault();
+    if (!approvalRemarks.trim()) {
+      showAlert("Please provide remarks.", "error");
+      return;
+    }
+    try {
+      setSaving(true);
+      const payload = { ...plan, sessions, status: remarksAction, approval_remarks: approvalRemarks };
+      await lessonPlanService.update(activeId, payload);
+      setPlan(payload);
+      setShowRemarksModal(false);
+      showAlert(`Lesson plan ${remarksAction.toLowerCase()}!`, "success");
+    } catch (error) {
+      console.error(`Failed to ${remarksAction.toLowerCase()}:`, error);
+      showAlert(`Failed to ${remarksAction.toLowerCase()} lesson plan.`, "error");
     } finally {
       setSaving(false);
     }
@@ -294,7 +400,7 @@ const LessonPlanEditor = () => {
           });
         }
         
-        await lessonPlanService.update(id, { ...plan, sessions: mergedSessions });
+        await lessonPlanService.update(activeId, { ...plan, sessions: mergedSessions });
         
         if (schedule.unscheduled_topics && schedule.unscheduled_topics.length > 0) {
           showAlert(`Schedule generated, but ${schedule.unscheduled_topics.length} topics could not fit before the semester ends! They have been added to the bottom of the list without dates.`, "warning");
@@ -347,30 +453,55 @@ const LessonPlanEditor = () => {
         
         <div className="top-bar-actions">
           <button className="btn btn-secondary btn-sm" onClick={() => handleExport('pdf')} disabled={saving} title="Export as PDF">
-            <Download size={14} /> PDF
+            <FileText size={14} /> PDF
           </button>
           <button className="btn btn-secondary btn-sm" onClick={() => handleExport('docx')} disabled={saving} title="Export as Word">
-            <Download size={14} /> Word
+            <FileText size={14} /> Word
           </button>
           <button className="btn btn-secondary btn-sm" onClick={() => handleExport('xlsx')} disabled={saving} title="Export as Excel">
-            <Download size={14} /> Excel
+            <FileSpreadsheet size={14} /> Excel
           </button>
           
-          {(user?.role === 'hod' || user?.role === 'admin') && plan.status !== 'Approved' && (
-            <button className="btn btn-success btn-sm" onClick={handleApprove} disabled={saving}>
-              <CheckCircle size={16} /> Approve
+          {user?.role === 'hod' && plan.status === 'Pending Approval' && (
+            <>
+              <button className="btn btn-success btn-sm" onClick={() => openRemarksModal('Approved')} disabled={saving}>
+                <CheckCircle size={16} /> Approve
+              </button>
+              <button className="btn btn-danger btn-sm" style={{ background: '#ef4444', color: 'white', border: 'none' }} onClick={() => openRemarksModal('Rejected')} disabled={saving}>
+                <XCircle size={16} /> Reject
+              </button>
+            </>
+          )}
+
+          {(!plan.status || plan.status === 'Draft' || plan.status === 'Rejected') && isOwnerOrAdmin && (
+            <button className="btn btn-warning btn-sm" style={{ background: '#f59e0b', color: 'white', border: 'none' }} onClick={handleSubmitForApproval} disabled={saving}>
+              <Send size={16} /> Submit for Approval
             </button>
           )}
           
-          <button className="btn btn-accent btn-sm" onClick={openScheduleModal} disabled={saving || generatingSchedule}>
-            <Calendar size={16} /> Generate Schedule
-          </button>
+          {isOwnerOrAdmin && (
+            <button className="btn btn-accent btn-sm" onClick={openScheduleModal} disabled={saving || generatingSchedule}>
+              <Calendar size={16} /> Generate Schedule
+            </button>
+          )}
           
-          <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
-            <Save size={16} /> {saving ? 'Saving...' : 'Save Changes'}
-          </button>
+          {isOwnerOrAdmin && (
+            <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
+              <Save size={16} /> {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          )}
         </div>
       </div>
+
+      {plan.approval_remarks && (
+        <div style={{ padding: '1rem', background: plan.status === 'Rejected' ? '#fef2f2' : '#f0fdf4', border: `1px solid ${plan.status === 'Rejected' ? '#f87171' : '#86efac'}`, borderRadius: '8px', marginBottom: '1.5rem', display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+          <MessageSquare size={20} color={plan.status === 'Rejected' ? '#ef4444' : '#22c55e'} style={{ marginTop: '0.1rem' }} />
+          <div>
+            <h4 style={{ margin: 0, color: plan.status === 'Rejected' ? '#b91c1c' : '#166534', fontSize: '0.95rem' }}>HOD Remarks ({plan.status})</h4>
+            <p style={{ margin: '0.25rem 0 0 0', color: '#4b5563', fontSize: '0.9rem', whiteSpace: 'pre-wrap' }}>{plan.approval_remarks}</p>
+          </div>
+        </div>
+      )}
 
       <div className="editor-content">
         <div className="editor-table-wrapper">
@@ -386,18 +517,19 @@ const LessonPlanEditor = () => {
                 <th width="10%">CO</th>
                 <th width="13%">Teaching Pedagogy</th>
                 <th width="13%">Assessment</th>
-                <th width="3%"></th>
+                {isOwnerOrAdmin && <th width="3%"></th>}
               </tr>
             </thead>
             <tbody>
               {sessions.map((session, idx) => (
                 <tr key={idx}>
-                  <td className="text-center">{idx + 1}</td>
-                  <td>
-                    <select 
+                  <td className="text-center" data-label="No.">{idx + 1}</td>
+                  <td data-label="Day">
+                    <CustomSelect 
                       className="inline-input"
                       value={session.day_of_week || '-'}
                       onChange={(e) => handleSessionChange(idx, 'day_of_week', e.target.value)}
+                      disabled={!isOwnerOrAdmin}
                     >
                       <option value="-">-</option>
                       <option value="Monday">Monday</option>
@@ -406,44 +538,55 @@ const LessonPlanEditor = () => {
                       <option value="Thursday">Thursday</option>
                       <option value="Friday">Friday</option>
                       <option value="Saturday">Saturday</option>
-                    </select>
+                    </CustomSelect>
                   </td>
-                  <td>
+                  <td data-label="Date">
                     <input 
                       type="date" 
                       className="inline-input"
                       value={session.date || ''} 
                       onChange={(e) => handleSessionChange(idx, 'date', e.target.value)}
+                      disabled={!isOwnerOrAdmin}
                     />
                   </td>
-                  <td>
+                  <td data-label="Planned Periods">
                     <input 
                       type="text" 
                       className="inline-input text-center"
                       value={session.period || session.hours || ''} 
                       onChange={(e) => handleSessionChange(idx, 'period', e.target.value)}
                       placeholder="e.g. Hour 1"
+                      disabled={!isOwnerOrAdmin}
                     />
                   </td>
-                  <td>
+                  <td data-label="Topic">
                     {session.session_type === 'exam' ? (
                       <div className="d-flex align-items-center h-100 px-2 text-danger fw-bold">
                         {session.exam_type || 'CIA'} Exam
                       </div>
                     ) : (
-                      <textarea 
-                        className="inline-textarea"
-                        value={session.topic || ''}
-                        onChange={(e) => handleSessionChange(idx, 'topic', e.target.value)}
-                        rows={2}
-                      />
+                      <div className="d-flex flex-column gap-1">
+                        <textarea 
+                          className="inline-textarea"
+                          value={session.topic || ''}
+                          onChange={(e) => handleSessionChange(idx, 'topic', e.target.value)}
+                          disabled={!isOwnerOrAdmin || !!session.execution}
+                          rows={2}
+                        />
+                        {session.execution && (
+                          <div className="text-success small fw-bold d-flex align-items-center gap-1 mt-1 px-1">
+                            <CheckCircle size={12} /> {session.execution.status === 'completed' ? `Completed on ${new Date(session.execution.executed_date).toLocaleDateString()}` : 'Executed'}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </td>
-                  <td>
-                    <select 
+                  <td data-label="Module">
+                    <CustomSelect 
                       className="inline-input"
                       value={session.module || ''} 
                       onChange={(e) => handleSessionChange(idx, 'module', e.target.value)}
+                      disabled={!isOwnerOrAdmin}
                     >
                       <option value="">-</option>
                       <option value="Unit 1">Unit 1</option>
@@ -451,13 +594,14 @@ const LessonPlanEditor = () => {
                       <option value="Unit 3">Unit 3</option>
                       <option value="Unit 4">Unit 4</option>
                       <option value="Unit 5">Unit 5</option>
-                    </select>
+                    </CustomSelect>
                   </td>
-                  <td>
-                    <select 
+                  <td data-label="CO">
+                    <CustomSelect 
                       className="inline-input"
                       value={session.co || ''} 
                       onChange={(e) => handleSessionChange(idx, 'co', e.target.value)}
+                      disabled={!isOwnerOrAdmin}
                     >
                       <option value="">-</option>
                       <option value="CO1">CO1</option>
@@ -466,16 +610,17 @@ const LessonPlanEditor = () => {
                       <option value="CO4">CO4</option>
                       <option value="CO5">CO5</option>
                       <option value="CO6">CO6</option>
-                    </select>
+                    </CustomSelect>
                   </td>
-                  <td>
+                  <td data-label="Teaching Pedagogy">
                     {session.session_type === 'exam' ? (
                       <span className="text-muted">-</span>
                     ) : (
-                      <select 
+                      <CustomSelect 
                         className="inline-input"
                         value={session.teaching_method || ''}
                         onChange={(e) => handleSessionChange(idx, 'teaching_method', e.target.value)}
+                        disabled={!isOwnerOrAdmin}
                       >
                         <option value="">-</option>
                         <option value="Chalk & Talk">Chalk & Talk</option>
@@ -488,14 +633,15 @@ const LessonPlanEditor = () => {
                         <option value="Learning through problem solving">Learning through problem solving</option>
                         <option value="Project based learning">Project based learning</option>
                         <option value="Flipped Class room">Flipped Class room</option>
-                      </select>
+                      </CustomSelect>
                     )}
                   </td>
-                  <td>
-                    <select 
+                  <td data-label="Assessment">
+                    <CustomSelect 
                       className="inline-input"
                       value={session.assessment || ''}
                       onChange={(e) => handleSessionChange(idx, 'assessment', e.target.value)}
+                      disabled={!isOwnerOrAdmin}
                     >
                       <option value="">-</option>
                       <option value="Quiz">Quiz</option>
@@ -504,27 +650,31 @@ const LessonPlanEditor = () => {
                       <option value="Presentation">Presentation</option>
                       <option value="Project Review">Project Review</option>
                       <option value="Viva">Viva</option>
-                    </select>
+                    </CustomSelect>
                   </td>
-                  <td className="text-center align-middle">
-                    <button 
-                      className="btn-icon text-danger opacity-50 hover-opacity-100" 
-                      onClick={() => handleRemoveSession(idx)}
-                      title="Remove Session"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </td>
+                  {isOwnerOrAdmin && (
+                    <td className="text-center align-middle" data-label="Actions">
+                      <button 
+                        className="btn-icon text-danger opacity-50 hover-opacity-100" 
+                        onClick={() => handleRemoveSession(idx)}
+                        title="Remove Session"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <div className="editor-table-footer p-3 border-top d-flex justify-content-center">
-          <button className="btn btn-secondary btn-sm d-flex align-items-center gap-2" onClick={handleAddSession}>
-            <Plus size={16} /> Add Session Row
-          </button>
-        </div>
+        {isOwnerOrAdmin && (
+          <div className="editor-table-footer p-3 border-top d-flex justify-content-center">
+            <button className="btn btn-secondary btn-sm d-flex align-items-center gap-2" onClick={handleAddSession}>
+              <Plus size={16} /> Add Session Row
+            </button>
+          </div>
+        )}
       </div>
 
       {showScheduleModal && (
@@ -534,7 +684,7 @@ const LessonPlanEditor = () => {
               <h2>Generate Schedule</h2>
               <button className="btn-icon" onClick={() => setShowScheduleModal(false)}><X size={20} /></button>
             </div>
-            <div className="modal-body">
+            <div className="modal-body" style={{ maxHeight: '65vh', overflowY: 'auto' }}>
               <p className="mb-4 text-secondary">
                 Select the Academic Calendar and Faculty Timetable to use for scheduling this course. 
                 The system will automatically allocate the topics to the available dates and periods.
@@ -542,7 +692,7 @@ const LessonPlanEditor = () => {
               
               <div className="form-group mb-4">
                 <label className="form-label">Academic Calendar</label>
-                <select 
+                <CustomSelect 
                   className="form-control" 
                   value={selectedCalendarId} 
                   onChange={(e) => {
@@ -573,12 +723,12 @@ const LessonPlanEditor = () => {
                       {cal.name || `${cal.academic_year} (Sem ${cal.semester})`}
                     </option>
                   ))}
-                </select>
+                </CustomSelect>
               </div>
 
               <div className="form-group mb-4">
                 <label className="form-label">Faculty Timetable</label>
-                <select 
+                <CustomSelect 
                   className="form-control" 
                   value={selectedTimetableId} 
                   onChange={(e) => setSelectedTimetableId(e.target.value)}
@@ -589,7 +739,7 @@ const LessonPlanEditor = () => {
                       {tt.displayName || tt.name || (tt.academic_year ? `Timetable ${tt.academic_year}` : (tt.semester ? `Timetable (Sem ${tt.semester})` : 'Timetable'))}
                     </option>
                   ))}
-                </select>
+                </CustomSelect>
               </div>
 
               <div className="form-group mb-4">
@@ -659,10 +809,23 @@ const LessonPlanEditor = () => {
                   };
 
                   const handleAddConfig = () => {
+                    const defaultType = 'CIA 2';
+                    let start = '';
+                    let end = '';
+                    
+                    const cal = availableCalendars.find(c => (c._id || c.id) === selectedCalendarId);
+                    if (cal) {
+                      const calField = EXAM_TYPE_FIELD_MAP[defaultType];
+                      if (calField && cal[calField] && cal[calField].start_date && cal[calField].end_date) {
+                        start = parseDate(cal[calField].start_date);
+                        end = parseDate(cal[calField].end_date);
+                      }
+                    }
+
                     setExamConfigs([...examConfigs, {
-                      exam_type: 'CIA 2',
-                      start_date: '',
-                      end_date: '',
+                      exam_type: defaultType,
+                      start_date: start,
+                      end_date: end,
                       exam_days: ['Monday', 'Saturday'],
                       duration: 2
                     }]);
@@ -685,19 +848,22 @@ const LessonPlanEditor = () => {
                       const selectedField = EXAM_TYPE_FIELD_MAP[config.exam_type];
                       const calDateRange = cal && selectedField ? cal[selectedField] : null;
                       const hasCalendarDates = calDateRange && calDateRange.start_date && calDateRange.end_date;
+                      const isAutoFilled = hasCalendarDates && config.start_date === parseDate(calDateRange.start_date) && config.end_date === parseDate(calDateRange.end_date);
                       
                       return (
                         <div key={index} className="mb-4 pb-3" style={index < examConfigs.length - 1 ? { borderBottom: '1px solid #dee2e6' } : {}}>
                           {cal && (
                             <div className="d-flex justify-content-between align-items-center mb-3">
                               <div style={{ padding: '0.5rem 0.75rem', borderRadius: '6px', 
-                                background: hasCalendarDates ? '#e6f4ea' : '#fff3cd',
-                                border: `1px solid ${hasCalendarDates ? '#34a853' : '#ffc107'}`,
-                                fontSize: '0.82rem', color: hasCalendarDates ? '#1e7e34' : '#856404'
+                                background: isAutoFilled ? '#e6f4ea' : '#fff3cd',
+                                border: `1px solid ${isAutoFilled ? '#34a853' : '#ffc107'}`,
+                                fontSize: '0.82rem', color: isAutoFilled ? '#1e7e34' : '#856404'
                               }}>
-                                {hasCalendarDates 
+                                {isAutoFilled 
                                   ? `✅ Dates auto-filled from ${cal.academic_year} (Sem ${cal.semester}) calendar`
-                                  : `⚠️ No dates found for "${config.exam_type}" in the selected calendar. Enter manually below, or update the Academic Calendar first.`
+                                  : hasCalendarDates 
+                                    ? `⚠️ Calendar has dates for ${config.exam_type}, but you are using custom dates. (Click exam type to reset)`
+                                    : `⚠️ No dates found for "${config.exam_type}" in the selected calendar. Enter manually below, or update the Academic Calendar first.`
                                 }
                               </div>
                               {examConfigs.length > 1 && (
@@ -710,7 +876,7 @@ const LessonPlanEditor = () => {
                           <div className="row mb-3">
                             <div className="col-md-6">
                               <label className="form-label">Exam Type</label>
-                              <select 
+                              <CustomSelect 
                                 className="form-control"
                                 value={config.exam_type}
                                 onChange={(e) => handleUpdateConfig(index, 'exam_type', e.target.value)}
@@ -720,7 +886,7 @@ const LessonPlanEditor = () => {
                                   <option key={type} value={type}>{formatOptionLabel(type)}</option>
                                 ))}
                                 <option value="Unit Test">Unit Test</option>
-                              </select>
+                              </CustomSelect>
                             </div>
                             <div className="col-md-6">
                               <label className="form-label">Exam Duration (Hours)</label>
@@ -798,6 +964,39 @@ const LessonPlanEditor = () => {
                 {generatingSchedule ? 'Generating...' : 'Generate Schedule'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Remarks Modal */}
+      {showRemarksModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '400px' }}>
+            <div className="modal-header">
+              <h2>{remarksAction} Lesson Plan</h2>
+              <button className="btn-icon" onClick={() => setShowRemarksModal(false)}><XCircle size={20}/></button>
+            </div>
+            <form onSubmit={handleApprovalSubmit}>
+              <div className="modal-body">
+                <div className="form-group mb-3">
+                  <label>Remarks / Feedback <span className="text-error">*</span></label>
+                  <textarea 
+                    className="form-control" 
+                    rows="3" 
+                    value={approvalRemarks} 
+                    onChange={(e) => setApprovalRemarks(e.target.value)} 
+                    placeholder="Provide your reasons or feedback..." 
+                    required 
+                  />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowRemarksModal(false)}>Cancel</button>
+                <button type="submit" className={`btn ${remarksAction === 'Approved' ? 'btn-success' : 'btn-danger'}`} style={remarksAction === 'Rejected' ? { background: '#ef4444', color: 'white', border: 'none' } : {}} disabled={saving}>
+                  {saving ? 'Saving...' : remarksAction}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

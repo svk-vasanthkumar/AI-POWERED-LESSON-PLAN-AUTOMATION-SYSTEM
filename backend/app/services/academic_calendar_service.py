@@ -251,6 +251,49 @@ async def update_calendar(
         {"$set": updates},
     )
 
+    if result.matched_count > 0:
+        try:
+            sem = existing.get("semester")
+            year = existing.get("academic_year", "")
+            event_type = "CALENDAR_UPDATED"
+            title = "Academic Calendar Updated"
+            msg = f"The academic calendar for Semester {sem} ({year}) has been updated."
+            
+            if "holidays" in dumped:
+                event_type = "HOLIDAY_ADDED"
+                title = "Academic Calendar: Holiday Updated"
+                msg = f"Holidays have been updated in the Semester {sem} academic calendar."
+            elif any(k in dumped for k in ("cia_1", "cia_2", "cia_3", "internal_exams")):
+                event_type = "EXAM_DATE_CHANGED"
+                title = "Academic Calendar: Examination Dates Changed"
+                msg = f"Internal examination schedules have been updated for Semester {sem}."
+
+            from app.services.notification_service import dispatch_targeted_notification, resolve_course_recipients
+            async for crs in db.courses.find({"semester": sem}):
+                recipients = await resolve_course_recipients(str(crs["_id"]))
+                for uid in recipients:
+                    await dispatch_targeted_notification(
+                        recipient_id=uid,
+                        event_type=event_type,
+                        entity_type="CALENDAR",
+                        entity_id=calendar_id,
+                        course_id=str(crs["_id"]),
+                        severity="INFO" if event_type != "EXAM_DATE_CHANGED" else "WARNING",
+                        type="info" if event_type != "EXAM_DATE_CHANGED" else "warning",
+                        title=title,
+                        message=msg,
+                        link="/academic-calendar",
+                        email_subject=f"{title} - Semester {sem}",
+                        metadata={
+                            "academic_year": year,
+                            "semester": sem,
+                            "course_code": crs.get("course_code"),
+                            "course_name": crs.get("course_name")
+                        }
+                    )
+        except Exception as e:
+            print(f"Failed to dispatch calendar notifications: {e}")
+
     return result.matched_count > 0
 
 

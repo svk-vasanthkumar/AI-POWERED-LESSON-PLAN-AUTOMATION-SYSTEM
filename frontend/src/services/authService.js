@@ -2,41 +2,41 @@ import api from './api';
 
 export const authService = {
   login: async (email, password) => {
-    const response = await api.post('/auth/login', {
-      email,
-      password
-    });
-    
+    const response = await api.post('/auth/login', { email, password });
+    // Store token from response for Bearer auth
     if (response.data.access_token) {
       localStorage.setItem('jwt_token', response.data.access_token);
     }
     return response.data;
   },
-  
+
   resetPassword: async (email, current_password, new_password) => {
     const response = await api.post('/auth/reset-password', {
       email,
       current_password,
-      new_password
+      new_password,
     });
     return response.data;
   },
-  
+
   forgotPassword: async (email) => {
     const response = await api.post('/auth/forgot-password', { email });
     return response.data;
   },
-  
+
   resetPasswordWithToken: async (token, new_password) => {
-    const response = await api.post('/auth/reset-password-token', { token, new_password });
+    const response = await api.post('/auth/reset-password-token', {
+      token,
+      new_password,
+    });
     return response.data;
   },
-  
+
   getProfile: async () => {
     const response = await api.get('/auth/profile');
     return response.data.user;
   },
-  
+
   logout: () => {
     localStorage.removeItem('jwt_token');
   },
@@ -49,5 +49,19 @@ export const authService = {
   updatePreferences: async (preferencesData) => {
     const response = await api.put('/auth/preferences', preferencesData);
     return response.data;
-  }
+  },
+
+  /** Confirm email address using the token from the verification email link. */
+  verifyEmail: async (token) => {
+    const response = await api.post('/auth/verify-email', { token });
+    return response.data;
+  },
+
+  /** Resend the verification email to an unverified address. */
+  resendVerification: async (email) => {
+    const response = await api.post('/auth/resend-verification', { email });
+    return response.data;
+  },
+
+
 };

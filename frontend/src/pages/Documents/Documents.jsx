@@ -6,12 +6,14 @@ import { syllabusService } from '../../services/syllabusService';
 import { academicCalendarService } from '../../services/academicCalendarService';
 import { timetableService } from '../../services/timetableService';
 import { courseService } from '../../services/courseService';
+import { facultyService } from '../../services/facultyService';
 import { FileText, Trash2, ExternalLink, CalendarClock, Table } from 'lucide-react';
+import CustomSelect from '../../components/common/CustomSelect';
 import './Documents.css';
 
 const Documents = () => {
   const { user } = useAuth();
-  const { showAlert } = useAlert();
+  const { showAlert, showConfirm } = useAlert();
   const [documents, setDocuments] = useState({ syllabi: [], calendars: [], timetables: [] });
   const [courses, setCourses] = useState([]);
   const [selectedCourse, setSelectedCourse] = useState("");
@@ -28,6 +30,8 @@ const Documents = () => {
       const coursesData = await courseService.getAll().catch(() => []);
       setCourses(coursesData);
       
+      const facultiesData = await facultyService.getAll().catch(() => []);
+      
       const [syllabiData, calendarsData, timetablesData] = await Promise.all([
         syllabusService.getAll().catch(() => []),
         academicCalendarService.getAll().catch(() => []),
@@ -36,10 +40,24 @@ const Documents = () => {
 
       const mergeCourseData = (docs) => docs.map(doc => {
         const course = coursesData.find(c => c._id === doc.course_id || c.id === doc.course_id);
+        
+        let faculty_name = 'Unknown Faculty';
+        if (course) {
+           const fId = course.faculty_id || course.assigned_faculty_id;
+           const faculty = facultiesData.find(f => f._id === fId || f.id === fId);
+           if (faculty) faculty_name = faculty.name;
+        } else if (doc.faculty_id) {
+           const faculty = facultiesData.find(f => f._id === doc.faculty_id || f.id === doc.faculty_id);
+           if (faculty) faculty_name = faculty.name;
+        }
+
         return {
           ...doc,
           course_name: course ? course.course_name : (doc.course_name || 'Unknown'),
-          course_code: course ? course.course_code : (doc.course_code || 'N/A')
+          course_code: course ? course.course_code : (doc.course_code || 'N/A'),
+          academic_year: course ? course.academic_year : (doc.academic_year || 'N/A'),
+          semester: course ? course.semester : (doc.semester || 'N/A'),
+          faculty_name
         };
       });
 
@@ -102,7 +120,8 @@ const Documents = () => {
   };
 
   const handleDelete = async (type, id, serviceCall) => {
-    if (window.confirm(`Are you sure you want to delete this ${type}?`)) {
+    const confirmed = await showConfirm(`Are you sure you want to delete this ${type}?`, `Delete ${type}`);
+    if (confirmed) {
       try {
         await serviceCall(id);
         
@@ -120,6 +139,7 @@ const Documents = () => {
         });
 
         fetchAllDocuments();
+        showAlert(`${type.charAt(0).toUpperCase() + type.slice(1)} deleted successfully`, 'success');
       } catch (error) {
         showAlert("Failed to delete document: " + (error.uiMessage || error.message), "error");
       }
@@ -141,7 +161,8 @@ const Documents = () => {
           
           <div className="upload-card-wrapper">
             <div style={{ marginBottom: '10px' }}>
-              <select 
+              <label className="form-label" style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: '8px', display: 'block' }}>Select Target Course</label>
+              <CustomSelect 
                 className="form-control" 
                 value={selectedCourse}
                 onChange={(e) => setSelectedCourse(e.target.value)}
@@ -152,7 +173,7 @@ const Documents = () => {
                     {course.course_code} - {course.course_name}
                   </option>
                 ))}
-              </select>
+              </CustomSelect>
             </div>
             
             <UploadCard 
@@ -226,7 +247,7 @@ const Documents = () => {
                     </div>
                     <div className="doc-details">
                       <h4 className="doc-title">{doc.course_code || 'Unknown'} - {doc.course_name || 'Syllabus'}</h4>
-                      <p className="doc-meta">Semester {doc.semester || 'N/A'} • Syllabus</p>
+                      <p className="doc-meta">Sem {doc.semester} • {doc.academic_year} • Syllabus</p>
                     </div>
                     <div className="doc-actions" style={{ display: 'flex', gap: '0.5rem' }}>
                       <button className="btn-icon text-blue" onClick={() => window.open(`/preview/syllabus/${doc._id || doc.id}`, '_blank')} title="Preview">
@@ -267,8 +288,12 @@ const Documents = () => {
                       <Table size={20} />
                     </div>
                     <div className="doc-details">
-                      <h4 className="doc-title">{doc.name || 'Timetable'}</h4>
-                      <p className="doc-meta">Timetable</p>
+                      <h4 className="doc-title">{doc.course_code && doc.course_code !== 'N/A' ? `${doc.course_code} - Timetable` : (doc.name || 'Timetable')}</h4>
+                      <p className="doc-meta">
+                        {doc.academic_year && doc.academic_year !== 'N/A' ? `${doc.academic_year} • ` : ''}
+                        {doc.semester && doc.semester !== 'N/A' ? `Sem ${doc.semester} • ` : ''}
+                        {doc.faculty_name} • {doc.course_name && doc.course_name !== 'Unknown' ? doc.course_name : 'Subject'}
+                      </p>
                     </div>
                     <div className="doc-actions" style={{ display: 'flex', gap: '0.5rem' }}>
                       <button className="btn-icon text-blue" onClick={() => window.open(`/preview/timetable/${doc._id || doc.id}`, '_blank')} title="Preview">

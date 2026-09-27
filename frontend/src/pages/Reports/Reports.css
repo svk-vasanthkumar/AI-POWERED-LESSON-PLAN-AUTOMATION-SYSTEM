@@ -1,44 +1,43 @@
+/* ===================================================================
+   Reports & Analytics Page
+   =================================================================== */
+
 .reports-page {
-  display: flex;
-  flex-direction: column;
+  animation: fadeIn 0.3s var(--ease-out);
 }
 
 .reports-content {
   margin-top: 24px;
 }
 
+/* ── Placeholder / loading card ───────────────────────────────────── */
 .report-placeholder-card {
-  background-color: var(--surface-color);
+  background: var(--surface-color);
   border: 1px dashed var(--border-color);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 64px 24px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  color: var(--text-secondary);
 }
 
-.report-placeholder-card h3 {
-  margin: 0 0 8px 0;
-  color: var(--text-primary);
-}
-
-.max-w-md {
-  max-width: 28rem;
-  margin: 0 auto;
-}
-
+/* ── Detailed grid ────────────────────────────────────────────────── */
 .detailed-reports-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
   gap: 24px;
 }
 
+/* ── Report Card ──────────────────────────────────────────────────── */
 .report-card {
-  background-color: var(--surface-color);
+  background: var(--surface-color);
   border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
+  box-shadow: var(--shadow-card);
+  animation: fadeInUp 0.4s var(--ease-out) both;
 }
 
 .report-card-header {
@@ -47,20 +46,22 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background-color: var(--background-color);
+  background: var(--bg-subtle);
 }
 
 .report-card-header h3 {
   margin: 0;
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
   color: var(--text-primary);
+  letter-spacing: -0.01em;
 }
 
 .report-card-body {
   padding: 24px 20px;
 }
 
+/* ── Coverage Circle ──────────────────────────────────────────────── */
 .coverage-summary {
   display: flex;
   justify-content: center;
@@ -71,7 +72,7 @@
   width: 120px;
   height: 120px;
   border-radius: 50%;
-  border: 8px solid var(--primary-color);
+  border: 8px solid var(--accent);
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -80,23 +81,28 @@
 
 .coverage-value {
   font-size: 28px;
-  font-weight: 700;
+  font-weight: 800;
   color: var(--text-primary);
+  line-height: 1;
+  letter-spacing: -0.03em;
 }
 
 .coverage-label {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-secondary);
+  font-weight: 500;
+  margin-top: 2px;
 }
 
 .section-subtitle {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-tertiary);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.07em;
 }
 
+/* ── Coverage List ────────────────────────────────────────────────── */
 .coverage-list {
   display: flex;
   flex-direction: column;
@@ -107,55 +113,52 @@
   display: flex;
   justify-content: space-between;
   margin-bottom: 8px;
+  align-items: center;
 }
 
 .course-name {
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-primary);
 }
 
 .course-stats {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-secondary);
+  font-weight: 500;
 }
 
+/* ── Progress Bar ─────────────────────────────────────────────────── */
 .progress-bar-container {
   height: 8px;
-  background-color: var(--border-color);
-  border-radius: 4px;
+  background: var(--border-color);
+  border-radius: var(--radius-full);
   overflow: hidden;
 }
 
 .progress-bar {
   height: 100%;
-  border-radius: 4px;
-  transition: width 0.3s ease;
+  border-radius: var(--radius-full);
+  transition: width 0.6s var(--ease-out);
 }
 
-.bg-success {
-  background-color: var(--success-color);
-}
+/* Fix undefined color tokens */
+.bg-success { background: var(--success) !important; }
+.bg-warning { background: var(--warning) !important; }
+.bg-danger  { background: var(--error) !important; }
 
-.bg-warning {
-  background-color: var(--warning-color);
-}
-
-.bg-danger {
-  background-color: var(--danger-color);
-}
-
+/* ── Workload / Progress List ─────────────────────────────────────── */
 .workload-list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 0;
 }
 
 .workload-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding-bottom: 16px;
+  padding: 14px 0;
   border-bottom: 1px solid var(--border-color);
 }
 
@@ -168,26 +171,31 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .faculty-avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background-color: var(--primary-light);
-  color: var(--primary-color);
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  background: var(--accent-light);
+  color: var(--accent);
   display: flex;
   justify-content: center;
   align-items: center;
-  font-weight: 600;
-  font-size: 18px;
+  font-weight: 700;
+  font-size: 14px;
+  flex-shrink: 0;
 }
 
 .faculty-name {
-  margin: 0 0 4px 0;
+  margin: 0 0 2px;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .faculty-dept {
@@ -196,15 +204,48 @@
   color: var(--text-secondary);
 }
 
-.stat-badge {
+.workload-stats {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  background-color: var(--background-color);
-  border-radius: 20px;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.workload-stats.flex-column {
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.stat-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  background: var(--accent-light);
+  color: var(--accent);
+  border-radius: var(--radius-full);
   font-size: 12px;
-  font-weight: 500;
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
+  font-weight: 600;
+}
+
+/* ── Responsive ───────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .detailed-reports-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .workload-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  
+  .workload-stats {
+    width: 100%;
+    justify-content: space-between;
+    flex-direction: row !important;
+    align-items: center !important;
+  }
 }

@@ -41,9 +41,26 @@ router = APIRouter(
     "/",
     dependencies=[Depends(require_roles("admin", "hod"))],
 )
-async def add_timetable(data: TimetableCreate):
+async def add_timetable(data: TimetableCreate, current_user: dict = Depends(get_current_user)):
     try:
         timetable_id = await create_timetable(data)
+
+        try:
+            from app.services.notification_service import dispatch_targeted_notification
+            await dispatch_targeted_notification(
+                event_type="TIMETABLE_UPDATED",
+                actor_id=str(current_user["_id"]),
+                actor_name=current_user.get("full_name") or current_user.get("username", "User"),
+                entity_type="timetable",
+                entity_id=timetable_id,
+                course_id=str(data.course_id) if data.course_id else None,
+                title="Timetable Created",
+                message="A timetable schedule has been created.",
+                severity="INFO",
+                link="/timetable",
+            )
+        except Exception:
+            pass
 
         return {
             "timetable_id": timetable_id,
@@ -201,7 +218,7 @@ async def single_timetable(
     "/{timetable_id}",
     dependencies=[Depends(require_roles("admin", "hod"))],
 )
-async def edit_timetable(timetable_id: str, data: TimetableUpdate):
+async def edit_timetable(timetable_id: str, data: TimetableUpdate, current_user: dict = Depends(get_current_user)):
     try:
         updated = await update_timetable(timetable_id, data)
     except ValueError as e:
@@ -215,6 +232,25 @@ async def edit_timetable(timetable_id: str, data: TimetableUpdate):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Timetable not found or no changes applied",
         )
+
+    try:
+        from app.services.notification_service import dispatch_targeted_notification
+        tt = await get_timetable(timetable_id)
+        cid = tt.get("course_id") if tt else None
+        await dispatch_targeted_notification(
+            event_type="TIMETABLE_UPDATED",
+            actor_id=str(current_user["_id"]),
+            actor_name=current_user.get("full_name") or current_user.get("username", "User"),
+            entity_type="timetable",
+            entity_id=timetable_id,
+            course_id=str(cid) if cid else None,
+            title="Timetable Updated",
+            message=f"Timetable updated by {current_user.get('full_name', 'User')}.",
+            severity="INFO",
+            link="/timetable",
+        )
+    except Exception:
+        pass
 
     return {"message": "Timetable updated successfully"}
 
